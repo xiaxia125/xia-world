@@ -871,9 +871,15 @@ select {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.04);
   color: var(--paper);
+  color-scheme: dark;
   font-family: var(--mono);
   font-size: 10px;
   outline: none;
+}
+
+select option {
+  background: var(--panel-solid);
+  color: var(--paper);
 }
 
 select:focus {

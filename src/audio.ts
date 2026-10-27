@@ -11,12 +11,12 @@ export class AudioSystem {
   private radioStarted = false;
 
   private musicGain?: GainNode;
-  private musicDelay?: DelayNode;
-  private musicTimer = 0;
+  private musicSource?: AudioBufferSourceNode;
+  private musicBuffer?: AudioBuffer;
+  private musicLoad?: Promise<void>;
   private musicOn = true;
-  private musicBeat = 0;
-  private nextBeatTime = 0;
-  private readonly beatDuration = 60 / 64;
+  private readonly musicGainValue = 0.22;
+  private worldPaused = false;
   private readonly pendingTimeouts = new Set<number>();
   private disposed = false;
 
@@ -37,7 +37,7 @@ export class AudioSystem {
     if (!this.ctx) {
       this.ctx = new AudioContext();
       this.master = this.ctx.createGain();
-      this.master.gain.value = this.volume;
+      this.master.gain.value = this.worldPaused ? 0 : this.volume;
       this.master.connect(this.ctx.destination);
 
       this.noiseBuffer = this.makeNoise(this.ctx, 2.5);
@@ -45,16 +45,31 @@ export class AudioSystem {
       this.startRain();
       this.buildRadio();
       this.buildMusic();
-      if (this.musicOn) this.startMusicScheduler();
     }
     if (this.ctx.state === "suspended") await this.ctx.resume();
+    void this.loadMusic().then(() => {
+      if (this.musicOn) this.startMusic();
+    });
   }
 
   setVolume(v: number) {
     this.volume = Math.max(0, Math.min(1, v));
-    if (this.master && this.ctx) {
-      this.master.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.08);
-    }
+    this.applyWorldGain();
+  }
+
+  /**
+   * 进入 2D 页面（街机/影院）时把 3D 世界的声音整体淡出，返回时恢复。
+   * 不走 setVolume，避免把用户设置的总音量冲掉。
+   */
+  setWorldPaused(paused: boolean) {
+    this.worldPaused = paused;
+    this.applyWorldGain();
+  }
+
+  private applyWorldGain() {
+    if (!this.master || !this.ctx) return;
+    const target = this.worldPaused ? 0 : this.volume;
+    this.master.gain.setTargetAtTime(target, this.ctx.currentTime, 0.12);
   }
 
   setRain(amount: number) {
@@ -180,145 +195,71 @@ export class AudioSystem {
 
   private buildMusic() {
     if (!this.ctx || !this.master || this.musicGain) return;
-    const ctx = this.ctx;
-    const gain = ctx.createGain();
-    gain.gain.value = this.musicOn ? 0.28 : 0;
+    const gain = this.ctx.createGain();
+    gain.gain.value = this.musicOn ? this.musicGainValue : 0;
     gain.connect(this.master);
-
-    const delay = ctx.createDelay(1.2);
-    delay.delayTime.value = 0.48;
-    const feedback = ctx.createGain();
-    feedback.gain.value = 0.12;
-    const wet = ctx.createGain();
-    wet.gain.value = 0.1;
-    delay.connect(feedback).connect(delay);
-    delay.connect(wet).connect(gain);
-
     this.musicGain = gain;
-    this.musicDelay = delay;
-
   }
 
-  private startMusicScheduler() {
-    if (this.disposed || !this.ctx || !this.musicGain) return;
-    if (this.musicTimer) window.clearInterval(this.musicTimer);
-    this.musicBeat = 0;
-    this.nextBeatTime = this.ctx.currentTime + 0.12;
-    this.musicTimer = window.setInterval(() => this.scheduleMusic(), 160);
-    this.scheduleMusic();
+  /** Loads the authored loop once; a failed asset load leaves other game audio usable. */
+  private loadMusic() {
+    if (this.disposed || !this.ctx || this.musicBuffer) return Promise.resolve();
+    if (this.musicLoad) return this.musicLoad;
+    const context = this.ctx;
+    const musicUrl = new URL("audio/xia-home-ambient.ogg", document.baseURI);
+    this.musicLoad = fetch(musicUrl)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Music asset request failed: ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => context.decodeAudioData(data))
+      .then((buffer) => {
+        if (this.disposed || this.ctx !== context) return;
+        this.musicBuffer = buffer;
+      })
+      .catch((error: unknown) => {
+        console.error("Unable to load XIA HOME background music:", error);
+      })
+      .finally(() => {
+        this.musicLoad = undefined;
+      });
+    return this.musicLoad;
   }
 
-  private stopMusicScheduler() {
-    if (this.musicTimer) window.clearInterval(this.musicTimer);
-    this.musicTimer = 0;
+  private startMusic() {
+    if (this.disposed || !this.ctx || !this.musicGain || !this.musicBuffer || this.musicSource) return;
+    const source = this.ctx.createBufferSource();
+    source.buffer = this.musicBuffer;
+    source.loop = true;
+    source.connect(this.musicGain);
+    source.start();
+    this.musicSource = source;
   }
 
-  private scheduleMusic() {
-    if (this.disposed || !this.ctx || !this.musicGain || !this.musicOn) return;
-    const ctx = this.ctx;
-    if (this.nextBeatTime < ctx.currentTime - 0.4) {
-      this.nextBeatTime = ctx.currentTime + 0.06;
+  private stopMusic() {
+    const source = this.musicSource;
+    this.musicSource = undefined;
+    if (!source) return;
+    try {
+      source.stop();
+    } catch {
+      // The source may already have ended while the page is being disposed.
     }
-    while (this.nextBeatTime < ctx.currentTime + 0.7) {
-      this.scheduleBeat(this.musicBeat, this.nextBeatTime);
-      this.musicBeat += 1;
-      this.nextBeatTime += this.beatDuration;
-    }
-  }
-
-  private scheduleBeat(beat: number, time: number) {
-    const chords = [
-      [110.0, 164.81, 261.63, 329.63, 392.0],
-      [87.31, 174.61, 220.0, 261.63, 349.23],
-      [130.81, 196.0, 261.63, 329.63, 392.0],
-      [98.0, 146.83, 196.0, 246.94, 293.66],
-      [110.0, 164.81, 220.0, 329.63, 440.0],
-    ];
-    const bar = Math.floor(beat / 8);
-    const chord = chords[bar % chords.length];
-    const inBar = beat % 8;
-
-    if (inBar === 0) this.playPad(chord, time);
-    if (inBar === 0) this.playBass(chord[0], time);
-
-    if (inBar === 2 || inBar === 6) {
-      const pattern = [2, 3, 1, 4, 2, 3, 4, 1];
-      const note = chord[pattern[inBar] % chord.length];
-      this.playPluck(note, time + 0.012, inBar);
-    }
-  }
-
-  private playPad(chord: number[], time: number) {
-    if (!this.ctx || !this.musicGain) return;
-    const ctx = this.ctx;
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 760;
-    filter.Q.value = 0.45;
-    filter.connect(this.musicGain);
-
-    chord.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      osc.type = i % 2 === 0 ? "sine" : "triangle";
-      osc.frequency.value = freq;
-      osc.detune.value = (i - 2) * 3.5;
-      const gain = ctx.createGain();
-      const level = i === 0 ? 0.007 : 0.009;
-      gain.gain.setValueAtTime(0.0001, time);
-      gain.gain.linearRampToValueAtTime(level, time + 1.3);
-      gain.gain.setValueAtTime(level, time + 4.2);
-      gain.gain.exponentialRampToValueAtTime(0.0001, time + 6.7);
-      osc.connect(gain).connect(filter);
-      osc.start(time);
-      osc.stop(time + 6.8);
-    });
-  }
-
-  private playBass(freq: number, time: number) {
-    if (!this.ctx || !this.musicGain) return;
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = freq / 2;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.linearRampToValueAtTime(0.022, time + 0.08);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 2.2);
-    osc.connect(gain).connect(this.musicGain);
-    osc.start(time);
-    osc.stop(time + 2.3);
-  }
-
-  private playPluck(freq: number, time: number, index: number) {
-    if (!this.ctx || !this.musicGain) return;
-    const ctx = this.ctx;
-    const osc = ctx.createOscillator();
-    osc.type = "triangle";
-    osc.frequency.value = freq;
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 2600;
-    const gain = ctx.createGain();
-    gain.gain.setValueAtTime(0.0001, time);
-    gain.gain.exponentialRampToValueAtTime(0.01, time + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, time + 0.72);
-
-    const pan = ctx.createStereoPanner();
-    pan.pan.value = ((index % 4) - 1.5) * 0.24;
-    osc.connect(filter).connect(gain).connect(pan);
-    pan.connect(this.musicGain);
-    if (this.musicDelay) pan.connect(this.musicDelay);
-    osc.start(time);
-    osc.stop(time + 0.75);
+    source.disconnect();
   }
 
   setMusic(on: boolean) {
     if (this.disposed) return;
     this.musicOn = on;
     if (!this.ctx || !this.musicGain) return;
-    this.musicGain.gain.setTargetAtTime(on ? 0.28 : 0, this.ctx.currentTime, 0.35);
-    if (on) this.startMusicScheduler();
-    else this.stopMusicScheduler();
+    this.musicGain.gain.setTargetAtTime(on ? this.musicGainValue : 0, this.ctx.currentTime, 0.35);
+    if (on) {
+      void this.loadMusic().then(() => {
+        if (this.musicOn) this.startMusic();
+      });
+    } else {
+      this.stopMusic();
+    }
   }
 
   toggleMusic(): boolean {
@@ -448,7 +389,7 @@ export class AudioSystem {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
-    this.stopMusicScheduler();
+    this.stopMusic();
     this.pendingTimeouts.forEach((timeout) => window.clearTimeout(timeout));
     this.pendingTimeouts.clear();
     const context = this.ctx;
@@ -458,7 +399,8 @@ export class AudioSystem {
     this.rainGain = undefined;
     this.radioGain = undefined;
     this.musicGain = undefined;
-    this.musicDelay = undefined;
+    this.musicBuffer = undefined;
+    this.musicLoad = undefined;
     this.noiseBuffer = undefined;
     if (context && context.state !== "closed") void context.close();
   }

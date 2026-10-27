@@ -190,16 +190,19 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     onSensitivity: (value) => {
       sensitivity = value;
       player.sensitivity = value;
+      ui.setSensitivity(value);
       save();
     },
     onVolume: (value) => {
       volume = value;
       if (!muted) audio.setVolume(value);
+      ui.setVolume(value);
       save();
     },
     onTimeScale: (value) => {
       timeScale = value;
       environment.timeScale = value;
+      ui.setTimeScale(value);
       save();
     },
     onReset: () => {
@@ -319,6 +322,9 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     ui.open2D(`${base}pages/${file}`, label);
     player.enabled = false;
     ui.hidePause();
+    // 进入街机/影院后 3D 世界的声音先静音，避免和页面里的声音叠在一起。
+    // 用 setWorldPaused 而不是 setVolume，回来时才能准确恢复原来的音量。
+    audio.setWorldPaused(true);
     if (egg) collectEgg(egg);
   }
 
@@ -334,6 +340,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   function close2D(requestLock = true) {
     ui.close2D();
+    audio.setWorldPaused(false);
     resumeGame(requestLock);
   }
 

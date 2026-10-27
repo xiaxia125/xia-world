@@ -910,7 +910,9 @@
         let shortPlaying = true;
         let shortAudio = null;
         let shortAudioTimer = 0;
-        let shortSoundOn = true;
+        // 进入影院时默认静音：内置短片的配乐是持续低音，不该一进来就响。
+        // 想听的人点一次「声音」按钮即可，之后在同一页面内保持开启。
+        let shortSoundOn = false;
         let bellIndex = 0;
         let last = performance.now();
         let videoFailed = false;

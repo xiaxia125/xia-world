@@ -670,7 +670,7 @@
         </div>
         <div class="top-actions">
           <a class="chip-button" href="index.html">2D 主页</a>
-          <button id="sound-toggle" class="chip-button" type="button"><span>声音 ON</span></button>
+          <button id="sound-toggle" class="chip-button" type="button"><span>声音 OFF</span></button>
           <button id="close-world" class="close-button" type="button">返回 3D <span aria-hidden="true">↗</span></button>
         </div>
       </header>
@@ -755,7 +755,9 @@
         const BEST_KEY = "xia-home-arcade-best";
 
         let best = Number(localStorage.getItem(BEST_KEY) || 0);
-        let soundOn = true;
+        // 进入街机时默认静音，避免从 3D 世界进来就冒出声。
+        // 想听的人点一次「声音」按钮即可。
+        let soundOn = false;
         let audioCtx = null;
         let last = performance.now();
         let raf = 0;

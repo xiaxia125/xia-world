@@ -476,15 +476,19 @@ export class VoxelWorld {
     // west: plaza to gym
     this.addFloor(-17, -13, -1.6, 3.6, 0.06, 0.12, C.path, { edge: false });
     // pond spur: continue from the south path and stop at the pond's stone edge.
-    this.addFloor(2.2, 15.6, 18.4, 21.6, 0.06, 0.12, C.path, { edge: false, tag: "pond-spur" });
+    // 起点对齐主路东缘 x=3，与主路不重叠，避免两块同高地面共面闪烁。
+    this.addFloor(3, 15.6, 18.4, 21.6, 0.06, 0.12, C.path, { edge: false, tag: "pond-spur" });
 
     // path edging
     const edge = (x: number, z: number, w: number, d: number) =>
       this.addBox(x, 0.075, z, w, 0.04, d, C.pathDark, { solid: false, edge: false });
     edge(-3.15, 22, 0.3, 18);
-    edge(3.15, 22, 0.3, 18);
-    edge(8.9, 18.25, 13.4, 0.24);
-    edge(8.9, 21.75, 13.4, 0.24);
+    // 主路东侧边线在池塘支路路口（z 18.4–21.6）处断开，否则一条深色线会横切路口。
+    edge(3.15, 15.7, 0.3, 5.4);
+    edge(3.15, 26.3, 0.3, 9.4);
+    // 支路边缘线沿支路自身长度铺，起点对齐 x=3，不再压到南北主路上。
+    edge(9.3, 18.28, 12.6, 0.24);
+    edge(9.3, 21.72, 12.6, 0.24);
     edge(-3.15, -15, 0.3, 4);
     edge(3.15, -15, 0.3, 4);
     edge(14.5, -1.75, 3, 0.3);
@@ -707,8 +711,9 @@ export class VoxelWorld {
     this.courtLight.position.set(cx, 7.4, cz);
     this.group.add(this.courtLight);
 
-    this.addBench(cx, 0.16, z1 + 1.1, -1);
-    this.addBench(cx, 0.16, z0 - 1.1, 1);
+    // 两张场边长椅原本背对球场，转 180° 让坐下的人面向球场。
+    this.addBench(cx, 0.16, z1 + 1.1, 1);
+    this.addBench(cx, 0.16, z0 - 1.1, -1);
   }
 
   private buildCourtLamp(x: number, z: number, _side: number) {
@@ -770,8 +775,16 @@ export class VoxelWorld {
     this.addBox(cx, 0.17, 2.0, 7.4, 0.03, 4.6, 0x313a35, { solid: false, edge: false });
     this.addBench(cx, 0.12, 6.7, 1);
 
-    // The old gym equipment is gone. The three walls now hold large, readable project screens.
-    const projectPanels = PROFILE.projects.slice(0, 3);
+    // The old gym equipment is gone. The walls now hold large, readable project screens.
+    const projectPanels = PROFILE.projects;
+    // 四个项目分两面墙：西墙两个，北墙两个。北墙面板宽 4.4，两块中心间距 4.8，
+    // 整体居中在展厅中轴 cx=-26.5：左块中心 -31.0，右块中心 -22.0。
+    const panelSlots: Array<{ x: number; z: number; rotationY: number }> = [
+      { x: x0 + 0.06, z: 0.8, rotationY: Math.PI / 2 },
+      { x: x0 + 0.06, z: 6.0, rotationY: Math.PI / 2 },
+      { x: -31.0, z: z0 + 0.06, rotationY: 0 },
+      { x: -22.0, z: z0 + 0.06, rotationY: 0 },
+    ];
     projectPanels.forEach((project, index) => {
       const texture = projectTexture(
         project.index,
@@ -780,16 +793,14 @@ export class VoxelWorld {
         project.summary,
         [...project.stack],
       );
-      let screen: THREE.Mesh;
-      if (index < 2) {
-        const z = 0.8 + index * 5.2;
-        screen = this.addSign(texture, 4.4, 2.75, x0 + 0.06, 2.9, z, Math.PI / 2);
-        this.addBox(x0 - 0.02, 2.9, z, 0.1, 3.0, 4.65, 0x202824, { solid: false, edge: false });
-        this.addBox(x0 + 0.13, 4.55, z, 0.08, 0.1, 4.2, 0xd8ff5f, { glow: true, solid: false, edge: false });
+      const slot = panelSlots[index] ?? panelSlots[panelSlots.length - 1]!;
+      const screen = this.addSign(texture, 4.4, 2.75, slot.x, 2.9, slot.z, slot.rotationY);
+      if (slot.rotationY === Math.PI / 2) {
+        this.addBox(slot.x - 0.08, 2.9, slot.z, 0.1, 3.0, 4.65, 0x202824, { solid: false, edge: false });
+        this.addBox(slot.x + 0.05, 4.55, slot.z, 0.08, 0.1, 4.2, 0xd8ff5f, { glow: true, solid: false, edge: false });
       } else {
-        screen = this.addSign(texture, 4.4, 2.75, -26.8, 2.9, z0 + 0.06, 0);
-        this.addBox(-26.8, 2.9, z0 - 0.02, 4.65, 3.0, 0.1, 0x202824, { solid: false, edge: false });
-        this.addBox(-26.8, 4.55, z0 + 0.13, 4.2, 0.1, 0.08, 0xd8ff5f, { glow: true, solid: false, edge: false });
+        this.addBox(slot.x, 2.9, slot.z - 0.08, 4.65, 3.0, 0.1, 0x202824, { solid: false, edge: false });
+        this.addBox(slot.x, 4.55, slot.z + 0.05, 4.2, 0.1, 0.08, 0xd8ff5f, { glow: true, solid: false, edge: false });
       }
       screen.name = `project-screen-${index}`;
       this.interactables.push({
@@ -1016,18 +1027,23 @@ export class VoxelWorld {
     ];
 
     const bookColors = [0x9a5a4c, 0x4f6f8f, 0x7b8a4f, 0xc4a45a, 0x6e5b7e, 0x4f8a7e];
-    const shelfRows = [0.5, 1.5, 2.5, 3.55];
-    for (let row = 0; row < shelfRows.length; row += 1) {
+    // 每排书的落脚面 = 下方格板的顶面（底座 0.22、隔板 1.20/2.20/3.20）。
+    // 之前用固定偏移推算书心，导致每本书都悬空约 0.3 并穿进上一层格板，
+    // 从门口看就像整排书倒挂在半空。现在按「底面贴着格板」算书心。
+    const shelfBases = [0.22, 1.2, 2.2, 3.2];
+    for (let row = 0; row < shelfBases.length; row += 1) {
       let bx = -1.28;
       for (let i = 0; i < 7; i += 1) {
         const w = 0.18 + ((i * 7 + row * 3) % 4) * 0.035;
+        const h = 0.55 + ((i + row) % 3) * 0.06;
         specs.push({
           x: bx,
-          y: shelfRows[row] + 0.34,
-          z: 0.02,
+          y: shelfBases[row]! + h / 2,
+          // 书背贴着背板（-z 侧），书背朝向房间（+z）。
+          z: -0.11,
           w,
-          h: 0.55 + ((i + row) % 3) * 0.06,
-          d: 0.52,
+          h,
+          d: 0.3,
           c: bookColors[(i + row * 2) % bookColors.length],
         });
         bx += w + 0.08;
@@ -1093,9 +1109,11 @@ export class VoxelWorld {
     this.addWallX(x1 + 0.2, z0 - 0.2, z1, 0, 4.8, 0x424f45);
     this.addWallZ(z0 - 0.2, x0 - 0.2, x1 + 0.2, 0, 4.8, 0x39453c);
     this.addFloor(x0 - 0.2, x1 + 0.2, z0 - 0.2, z1, 4.8, 0.3, 0x39453c, { edge: false });
-    this.addWallZ(z1 - 0.1, x0 - 0.2, 4.0, 0, 4.8, 0x424f45);
-    this.addWallZ(z1 - 0.1, 7.4, x1 + 0.2, 0, 4.8, 0x424f45);
-    this.addWallZ(z1 - 0.1, 4.0, 7.4, 3.4, 4.8, 0x424f45);
+    // 两层墙在 z=-31.4 处相接，避免门洞两侧的共面重叠引起闪烁。
+    const frontWallZ = z1 - 0.4;
+    this.addWallZ(frontWallZ, x0 - 0.2, 4.0, 0, 4.8, 0x424f45);
+    this.addWallZ(frontWallZ, 7.4, x1 + 0.2, 0, 4.8, 0x424f45);
+    this.addWallZ(frontWallZ, 4.0, 7.4, 3.4, 4.8, 0x424f45);
 
     // terminal
     this.addBox(5.5, 0.9, -37.1, 3.6, 1.8, 1.2, 0x26322b);
@@ -1124,8 +1142,10 @@ export class VoxelWorld {
 
     // The room is sealed from the sky, so it needs its own permanent fill
     // lights rather than relying on the night-scaled exterior lamp pool.
+    // 顶板底面为 4.5m，灯具留出间距，避免嵌入顶板或共面闪烁。
+    const ceilingLightY = 4.4;
     for (const x of [3.4, 7.6]) {
-      this.addBox(x, 4.55, -34.4, 1.35, 0.08, 0.55, 0xffe5b8, {
+      this.addBox(x, ceilingLightY, -34.4, 1.35, 0.08, 0.55, 0xffe5b8, {
         glow: true,
         solid: false,
         edge: false,
@@ -1142,7 +1162,7 @@ export class VoxelWorld {
     this.group.add(deskFill);
 
     // Green accent at the terminal.
-    this.addBox(5.5, 4.55, -36.0, 2.6, 0.1, 0.24, 0x7dffb0, { glow: true, solid: false });
+    this.addBox(5.5, ceilingLightY, -36.0, 2.6, 0.1, 0.24, 0x7dffb0, { glow: true, solid: false });
     const glow = new THREE.PointLight(0x72ffad, 2.4, 8, 2);
     glow.position.set(5.5, 2.7, -36.5);
     this.group.add(glow);
@@ -1346,6 +1366,8 @@ export class VoxelWorld {
     const radio = new THREE.Group();
     radio.position.set(2.0, 7.5, -19.6);
     radio.name = "radio";
+    // 电台面板原本背对天台入口，转 180° 让屏幕和旋钮朝向走上天台的一侧。
+    radio.rotation.y = Math.PI;
     const radioBody = new THREE.Mesh(
       new THREE.BoxGeometry(1.5, 1.0, 0.7),
       new THREE.MeshStandardMaterial({ color: 0x9d5d3d, roughness: 0.8 }),
@@ -1380,7 +1402,8 @@ export class VoxelWorld {
       0.18,
       2.28,
       7.98,
-      -19.235,
+      -19.965,
+      Math.PI,
     );
     const ledMaterial = new THREE.MeshBasicMaterial({ color: 0x2b332c });
     const led = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), ledMaterial);
@@ -1677,11 +1700,17 @@ export class VoxelWorld {
     const beak = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.2), orange);
     beak.position.set(0.55, 0.52, 0);
     duck.add(beak);
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-    for (const z of [-0.16, 0.16]) {
-      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), eyeMat);
-      eye.position.set(0.38, 0.64, z);
-      duck.add(eye);
+    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0a0a });
+    const eyeWhiteMat = new THREE.MeshBasicMaterial({ color: 0xfbf7ea });
+    // 头是 0.42 的方块，z 半宽 0.21。眼睛必须贴在头侧面之外才看得见：
+    // 眼白中心 z=±0.215（厚 0.03，外露 0.02），瞳孔再往外一点。
+    for (const z of [-0.215, 0.215]) {
+      const white = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.13, 0.03), eyeWhiteMat);
+      white.position.set(0.36, 0.63, z);
+      duck.add(white);
+      const pupil = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.07, 0.02), eyeMat);
+      pupil.position.set(0.365, 0.635, z + Math.sign(z) * 0.018);
+      duck.add(pupil);
     }
     duck.traverse((obj) => {
       if (obj instanceof THREE.Mesh) obj.castShadow = true;

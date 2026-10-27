@@ -135,13 +135,17 @@ export function projectTexture(
     ctx.stroke();
   }
 
+  // 序号只作为角落里的小编号保留，不再占一块醒目的色块。
+  ctx.fillStyle = `${accent}22`;
+  ctx.fillRect(42, 42, 44, 30);
+  ctx.strokeStyle = `${accent}66`;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(42, 42, 44, 30);
   ctx.fillStyle = accent;
-  ctx.fillRect(42, 42, 70, 70);
-  ctx.fillStyle = "#07100c";
-  ctx.font = "800 34px 'Arial Black', sans-serif";
+  ctx.font = "700 17px 'Cascadia Code', Consolas, monospace";
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  ctx.fillText(index, 77, 79);
+  ctx.fillText(index, 64, 58);
   ctx.textAlign = "left";
   ctx.textBaseline = "alphabetic";
 

@@ -30,7 +30,7 @@ export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile }: HudPr
             <span id="day-phase">{snapshot.dayPhase}</span>
           </span>
           <button id="btn-sound" className="icon-button" type="button" title={snapshot.soundOn ? "关闭所有声音" : "开启所有声音"} aria-label={snapshot.soundOn ? "关闭所有声音" : "开启所有声音"} aria-pressed={snapshot.soundOn} onClick={handlers.onSound}>
-            <span id="sound-icon" aria-hidden="true">{snapshot.soundOn ? "声" : "×"}</span>
+            <span id="sound-icon" aria-hidden="true">{snapshot.soundOn ? "♫" : "×"}</span>
           </button>
           <button id="btn-settings" className="icon-button" type="button" title="设置" aria-label="打开设置" onClick={onOpenSettings}>
             <span aria-hidden="true">≡</span>
