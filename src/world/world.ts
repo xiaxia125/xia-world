@@ -262,7 +262,7 @@ export class VoxelWorld {
   private readonly pianoKeys: THREE.Mesh[] = [];
   private readonly pianoKeyPress: number[] = [];
   /** 琴凳坐点。进入钢琴模式时引擎把玩家吸到这里，起身时再放回原位。 */
-  readonly pianoSeat = { x: -7.4, y: 0.05, z: 5.0, yaw: Math.PI / 2, eyeOffset: -0.28 };
+  readonly pianoSeat = { x: -6.95, y: 0.05, z: 5.0, yaw: Math.PI / 2, eyeOffset: -0.3 };
 
   private cat?: THREE.Group;
   private catPetTimer = 0;
@@ -2796,8 +2796,9 @@ export class VoxelWorld {
     );
 
     // 琴凳：座面 + 靠背，靠背在 +x 侧，坐上去背对广场。
-    this.addBox(x + 1.2, 0.3, z, 0.62, 0.6, 0.62, C.wood, { tag: "piano" });
-    this.addBox(x + 1.45, 0.7, z, 0.18, 1.2, 0.7, C.woodDark, { tag: "piano" });
+    // 凳面比原来往后退了 0.45 m，坐下后琴键不会顶到镜头。
+    this.addBox(x + 1.45, 0.3, z, 0.62, 0.6, 0.62, C.wood, { tag: "piano" });
+    this.addBox(x + 1.7, 0.7, z, 0.18, 1.2, 0.7, C.woodDark, { tag: "piano" });
     this.addBox(x, 0.2, z, 0.8, 0.4, 1.6, C.woodDark, { solid: false, edge: false });
 
     const proxy = new THREE.Mesh(
