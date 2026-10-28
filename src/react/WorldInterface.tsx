@@ -1,8 +1,11 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { ui } from "../ui";
+import { HelpPanel } from "./components/HelpPanel";
+import { BimView } from "./components/BimView";
 import { Hud } from "./components/Hud";
 import { Overlay } from "./components/Overlay";
 import { ProfilePanel } from "./components/ProfilePanel";
+import { ScopeView } from "./components/ScopeView";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { StartScreen } from "./components/StartScreen";
 import { TouchControls } from "./components/TouchControls";
@@ -24,14 +27,17 @@ export function WorldInterface() {
     <div id="ui">
       <div className="vignette" aria-hidden="true" />
       <StartScreen loading={snapshot.loading} leaving={snapshot.startLeaving} onEnter={handlers.onEnter} onOpenProfile={() => ui.openProfile("overview")} />
-      <Hud snapshot={snapshot} handlers={handlers} onOpenSettings={() => ui.openSettings()} onOpenProfile={() => ui.openProfile("overview")} />
+      <Hud snapshot={snapshot} handlers={handlers} onOpenSettings={() => ui.openSettings()} onOpenProfile={() => ui.openProfile("overview")} onOpenHelp={() => ui.openHelp()} />
       <SettingsSheet
         snapshot={snapshot}
         handlers={handlers}
         onClose={() => ui.closeSettings()}
       />
+      <HelpPanel snapshot={snapshot} />
       <Overlay snapshot={snapshot} handlers={handlers} />
       <ProfilePanel snapshot={snapshot} />
+      <ScopeView snapshot={snapshot} />
+      <BimView snapshot={snapshot} />
       <TouchControls snapshot={snapshot} />
     </div>
   );

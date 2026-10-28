@@ -369,74 +369,6 @@ export function radioTunerTexture(): THREE.CanvasTexture {
   return finish(c, 4);
 }
 
-/**
- * Larger type for the rooftop constellation. These panels are read through
- * the telescope, so the regular poster-sized signal texture is too small.
- */
-export function signalCardTexture(title: string, lines: string[]): THREE.CanvasTexture {
-  const width = 1024;
-  const height = 576;
-  const { c, ctx } = canvas(width, height);
-  const pad = 54;
-  const maxWidth = width - pad * 2;
-  ctx.fillStyle = "#07110c";
-  ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(216,255,95,0.42)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(18, 18, width - 36, height - 36);
-  ctx.fillStyle = "#d8ff5f";
-  ctx.fillRect(18, 18, 10, height - 36);
-  ctx.font = "600 20px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("XIA HOME / SKY SIGNAL", pad, 36);
-
-  ctx.textBaseline = "top";
-  ctx.fillStyle = "#f1ecdf";
-  ctx.font = "800 56px 'Arial Black', 'PingFang SC', 'Microsoft YaHei', sans-serif";
-  let y = 86;
-  let line = "";
-  for (const character of title) {
-    const next = line + character;
-    if (ctx.measureText(next).width > maxWidth && line) {
-      ctx.fillText(line, pad, y);
-      y += 64;
-      line = character;
-    } else {
-      line = next;
-    }
-  }
-  if (line) {
-    ctx.fillText(line, pad, y);
-    y += 64;
-  }
-
-  ctx.fillStyle = "rgba(241,236,223,0.84)";
-  ctx.font = "500 32px 'PingFang SC', 'Microsoft YaHei', sans-serif";
-  y += 18;
-  for (const paragraph of lines) {
-    let text = "";
-    for (const character of paragraph) {
-      const next = text + character;
-      if (ctx.measureText(next).width > maxWidth && text) {
-        ctx.fillText(text, pad, y);
-        y += 43;
-        text = character;
-      } else {
-        text = next;
-      }
-    }
-    if (text) {
-      ctx.fillText(text, pad, y);
-      y += 43;
-    }
-    y += 8;
-  }
-
-  ctx.font = "500 18px 'Cascadia Code', Consolas, monospace";
-  ctx.fillStyle = "rgba(216,255,95,0.62)";
-  ctx.fillText("E · READ / E · RETURN", pad, height - 46);
-  return finish(c, 8);
-}
-
 export function screenTexture(score: number, eggs: number, totalEggs = 7): THREE.CanvasTexture {
   const { c, ctx } = canvas(1024, 576);
   ctx.fillStyle = "#07110c";
@@ -743,4 +675,66 @@ export function cinemaTexture(): THREE.CanvasTexture {
     ctx.fillRect(x, 502, 32, 10);
   }
   return finish(c, 8);
+}
+
+/**
+ * 积水遮罩：黑色底 + 若干柔边白斑，用作水膜层的 alphaMap。
+ * 白的地方积水、黑的地方干，所以雨停后路面是一块块水洼而不是整片镜面。
+ * 用固定种子的伪随机，保证每次刷新水洼位置一样，不会看起来在漂。
+ */
+export function puddleMaskTexture(): THREE.CanvasTexture {
+  const { c, ctx } = canvas(512, 512);
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, 512, 512);
+
+  // 线性同余，种子固定 → 每次加载水洼形状一致
+  let seed = 20261028;
+  const rand = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+
+  // 大块积水：边缘用径向渐变糊开，读起来像摊开的水而不是画上去的圆
+  for (let i = 0; i < 26; i += 1) {
+    const x = rand() * 512;
+    const y = rand() * 512;
+    const r = 26 + rand() * 62;
+    const g = ctx.createRadialGradient(x, y, r * 0.25, x, y, r);
+    g.addColorStop(0, "rgba(255,255,255,0.95)");
+    g.addColorStop(0.62, "rgba(255,255,255,0.55)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    // 每块水洼由几段半径不同的弧拼成，避免全是标准圆
+    const lobes = 9;
+    for (let s = 0; s <= lobes; s += 1) {
+      const a = (s / lobes) * Math.PI * 2;
+      const wobble = 0.72 + rand() * 0.5;
+      const px = x + Math.cos(a) * r * wobble;
+      const py = y + Math.sin(a) * r * wobble;
+      if (s === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  // 小水点：让大片水洼之间也有零散反光
+  for (let i = 0; i < 90; i += 1) {
+    const x = rand() * 512;
+    const y = rand() * 512;
+    const r = 3 + rand() * 9;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, "rgba(255,255,255,0.7)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const texture = finish(c, 4);
+  // 遮罩只取亮度，不能按 sRGB 采样，否则水洼边缘会偏亮
+  texture.colorSpace = THREE.NoColorSpace;
+  return texture;
 }

@@ -223,7 +223,10 @@ function Experience() {
             <div className="profile-education-item" key={`${item.school}-${item.degree}`}>
               <div>
                 <strong>{item.school}</strong>
-                <span>{item.major} · {item.degree}</span>
+                <span>
+                  {item.major} · {item.degree}
+                  {item.mode ? ` · ${item.mode}` : ""}
+                </span>
               </div>
               <time>{item.period}</time>
             </div>
@@ -299,6 +302,24 @@ function Contact() {
         <h3>{PROFILE.name} · {PROFILE.role}</h3>
         <p>5 年前端开发经验 · 可沟通具体岗位与团队方向</p>
         <EmailActions />
+        <div className="profile-email-actions profile-email-actions--links">
+          <a
+            className="profile-action profile-action--quiet"
+            href={PROFILE.contact.githubRepo}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            这个站点的源码 <span aria-hidden="true">↗</span>
+          </a>
+          <a
+            className="profile-action profile-action--quiet"
+            href={PROFILE.contact.github}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            GitHub 主页 <span aria-hidden="true">↗</span>
+          </a>
+        </div>
         <div className="profile-contact-meta">
           <div>
             <span>求职方向</span>
@@ -410,6 +431,7 @@ export function ProfilePanel({ snapshot }: { snapshot: UISnapshot }) {
       aria-modal="true"
       aria-labelledby="profile-title"
       aria-hidden={!snapshot.profileOpen}
+      inert={!snapshot.profileOpen}
     >
       <div className="profile-shell">
         <header className="profile-topbar">
@@ -465,7 +487,7 @@ export function ProfilePanel({ snapshot }: { snapshot: UISnapshot }) {
             </div>
           </aside>
 
-          <div className="profile-main" ref={scrollRef}>
+          <div className="profile-main" ref={scrollRef} tabIndex={0} aria-label="档案内容，可用方向键滚动">
             <div className="profile-main-inner">
               <View />
               <footer className="profile-foot">

@@ -87,7 +87,7 @@
   gap: 10px;
   color: var(--profile-muted);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
 }
@@ -120,7 +120,7 @@
   background: rgba(255, 255, 255, 0.035);
   color: var(--profile-muted);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
   transition: color 0.2s, border-color 0.2s, background 0.2s;
 }
@@ -190,7 +190,7 @@
   margin: 0;
   color: var(--profile-lime);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.14em;
   line-height: 1.5;
   text-transform: uppercase;
@@ -221,7 +221,7 @@
   margin: 14px 0 0;
   color: var(--profile-muted);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.04em;
 }
 
@@ -236,7 +236,7 @@
 .profile-identity-note {
   margin: 22px 0 0;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.85;
 }
 
@@ -255,7 +255,7 @@
   border-radius: 4px;
   background: transparent;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 560;
   letter-spacing: 0.02em;
   text-align: left;
@@ -265,7 +265,7 @@
 .profile-nav button > span:first-child {
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 10px;
   letter-spacing: 0.08em;
 }
 
@@ -310,7 +310,7 @@
   border-top: 1px solid var(--profile-line);
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
 }
 
@@ -321,7 +321,7 @@
   background: transparent;
   color: var(--profile-lime);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
@@ -406,7 +406,7 @@
 .profile-card p:not(.profile-card-kicker):not(.profile-privacy-note) {
   margin: 14px 0 0;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.85;
 }
 
@@ -427,7 +427,7 @@
   position: relative;
   padding-left: 17px;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.75;
 }
 
@@ -468,7 +468,7 @@
   border-radius: 999px;
   color: var(--profile-muted);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.03em;
 }
 
@@ -506,7 +506,7 @@
   background: var(--profile-lime);
   color: #101a08;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.04em;
   transition: background 0.2s, border-color 0.2s, color 0.2s, transform 0.2s;
@@ -584,7 +584,7 @@
 .profile-project-category {
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.04em;
   text-align: right;
 }
@@ -601,7 +601,7 @@
 .profile-project-summary {
   margin: 15px 0 0;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
 }
 
@@ -648,7 +648,7 @@
   margin-top: 14px;
   color: var(--profile-lime);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 10px;
   line-height: 1.6;
 }
 
@@ -670,7 +670,7 @@
 .profile-timeline-period {
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   line-height: 1.6;
 }
@@ -687,7 +687,7 @@
 .profile-timeline-summary {
   margin: 13px 0 0;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.8;
 }
 
@@ -723,13 +723,13 @@
 .profile-education-item span,
 .profile-education-item time {
   color: var(--profile-faint);
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .profile-education-item time {
   flex: 0 0 auto;
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .profile-skill-grid {
@@ -760,7 +760,7 @@
   margin: 18px 0 0;
   padding: 0 0 0 18px;
   color: var(--profile-muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.7;
 }
 
@@ -819,7 +819,7 @@
 .profile-email-label {
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
@@ -849,10 +849,17 @@
   margin-top: 5px;
 }
 
+/* GitHub 链接行：与邮箱操作区分开，放在复制状态之下 */
+.profile-email-actions--links {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--profile-line);
+}
+
 .profile-email-status {
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.03em;
 }
 
@@ -874,7 +881,7 @@
   display: block;
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
@@ -907,7 +914,7 @@
   border-top: 1px solid var(--profile-line);
   color: var(--profile-faint);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.08em;
 }
 
@@ -917,7 +924,7 @@
   background: transparent;
   color: var(--profile-muted);
   font-family: var(--mono);
-  font-size: 8px;
+  font-size: 11px;
   letter-spacing: 0.06em;
   transition: color 0.2s;
 }
@@ -1093,7 +1100,7 @@
 @media (max-width: 560px) {
   .profile-topbar-title {
     gap: 7px;
-    font-size: 8px;
+    font-size: 10px;
     letter-spacing: 0.1em;
   }
 

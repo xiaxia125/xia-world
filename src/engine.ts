@@ -8,10 +8,14 @@ import { UI } from "./ui";
 import { WeatherSystem } from "./weather";
 import { VoxelWorld } from "./world/world";
 import { disposeThreeScene } from "./runtime/dispose-scene";
+import type { BimSceneHandle } from "./bim/bim-scene";
+import { typeLabel as typeLabelOf, type BimElement } from "./bim/building";
 import type { Interactable, Quality, WeatherType } from "./world/types";
 
 const SAVE_KEY = "voxel-home-v1";
 const CURRENT_SAVE_KEY = "xia-home-save";
+/** 操作说明只在第一次进岛时自动弹一次；用户自己按 H 不算。 */
+const HELP_SEEN_KEY = "xia-home-help-seen";
 const EGG_TOTAL = 7;
 const EGG_IDS = new Set([
   "arcade",
@@ -217,7 +221,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     onResume: () => resumeGame(),
   });
 
-  ui.setLoading(100);
   ui.setSensitivity(sensitivity);
   ui.setVolume(volume);
   ui.setQuality(quality);
@@ -297,6 +300,23 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     defer(() => {
       ui.toast("欢迎来到 Xia。按 P 打开职业档案，或走近出生点右侧的档案屏。", 4600);
     }, 900);
+    // 新访客不知道岛上能做什么，进岛后给一次操作说明；看过一次就不再打扰。
+    defer(() => {
+      if (ui.isBlocking || telescopeActive) return;
+      let seen = false;
+      try {
+        seen = localStorage.getItem(HELP_SEEN_KEY) === "1";
+      } catch {
+        // 隐私模式下读不到就当作没看过，弹一次不影响使用。
+      }
+      if (seen) return;
+      try {
+        localStorage.setItem(HELP_SEEN_KEY, "1");
+      } catch {
+        // 写不进去也无妨，最多下次再弹一次。
+      }
+      ui.openHelp();
+    }, 8000);
     save();
   }
 
@@ -367,6 +387,156 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   let telescopeActive = false;
 
+  // ------------------------------------------------------------------ BIM
+
+  /** 打开中的 BIM 场景句柄；null 表示不在查看器里。 */
+  let bimHandle: BimSceneHandle | null = null;
+  /** 当前数据源的构件索引，id → 构件，选中时查属性用。 */
+  let bimElementIndex = new Map<string, BimElement>();
+  /** 进 BIM 前的站位，退出时原样还原。 */
+  let bimReturn: { x: number; y: number; z: number; yaw: number; pitch: number } | null = null;
+  /** 打开过程中被取消（连按 E 或立刻退出）时用它丢弃晚到的加载结果。 */
+  let bimToken = 0;
+
+  /**
+   * 进入 BIM 查看器。
+   *
+   * 世界不销毁，只是停止渲染、停止推进——退出时世界还在原处，省掉重建成本，
+   * 也不会因为反复进出把显存撑大。BIM 那套 scene 是独立建的，退出时必须 dispose。
+   */
+  async function enterBim() {
+    if (bimHandle || ui.isBlocking) return;
+    const token = ++bimToken;
+
+    bimReturn = {
+      x: player.position.x,
+      y: player.position.y,
+      z: player.position.z,
+      yaw: player.yaw,
+      pitch: player.pitch,
+    };
+    player.enabled = false;
+    exitTelescope(false);
+    if (document.pointerLockElement) document.exitPointerLock();
+    ui.openBim();
+    audio.setWorldPaused(true);
+
+    try {
+      // 按需加载：不进 BIM 就不会下载这套代码
+      const [{ loadBimSource }, { createBimScene }] = await Promise.all([
+        import("./bim/loader"),
+        import("./bim/bim-scene"),
+      ]);
+      const source = await loadBimSource((v) => {
+        if (token === bimToken) ui.setBimProgress(v);
+      });
+      if (token !== bimToken) return;
+
+      // canvas 在 boot 开头已经检查过非空，这里再收窄一次类型给 TS 看
+      const sceneCanvas = canvas;
+      if (!sceneCanvas) return;
+      const handle = createBimScene(source.building, sceneCanvas);
+      if (source.model) {
+        // glb 模式：用模型自带的网格替换掉按构件重建的那一套，
+        // 保留包围盒与构件清单（从模型里读出来的）。
+        handle.root.add(source.model);
+      }
+      bimHandle = handle;
+      handle.attach(sceneCanvas);
+      handle.resize(window.innerWidth, window.innerHeight);
+      bimElementIndex = new Map(source.building.elements.map((el) => [el.id, el]));
+
+      const { setBimPanelData, setBimPanelHandlers } = await import(
+        "./react/components/BimView"
+      );
+      setBimPanelData({ elements: source.building.elements });
+      setBimPanelHandlers({
+        onShowFloor: (floor) => {
+          if (!bimHandle) return;
+          bimHandle.showFloor(floor);
+          ui.setBimFloor(floor);
+        },
+        onSelect: (id) => selectBimElement(id),
+        onExit: () => exitBim(),
+        onRetry: () => {
+          exitBim(false);
+          void enterBim();
+        },
+      });
+
+      if (token !== bimToken) return;
+      ui.setBimReady(source.origin);
+      if (source.note) {
+        ui.toast(`模型读取失败，已回退到程序化建筑：${source.note}`, 5200);
+      }
+    } catch (err) {
+      if (token !== bimToken) return;
+      // 失败也要把世界放回来，否则玩家卡在空画面里
+      ui.setBimError(
+        `BIM 场景没能装起来：${err instanceof Error ? err.message : String(err)}`,
+      );
+      audio.setWorldPaused(false);
+    }
+  }
+
+  /** 退出：还原站位与朝向，释放 BIM 那套资源。 */
+  function exitBim(resume = true) {
+    bimToken += 1;
+    if (bimHandle) {
+      bimHandle.dispose();
+      bimHandle = null;
+    }
+    void import("./react/components/BimView").then(({ setBimPanelHandlers }) => {
+      setBimPanelHandlers(null);
+    });
+    ui.closeBim(false);
+    audio.setWorldPaused(false);
+
+    if (bimReturn) {
+      player.setPosition(bimReturn.x, bimReturn.y, bimReturn.z, bimReturn.yaw, bimReturn.pitch);
+      bimReturn = null;
+    }
+    player.enabled = true;
+    if (resume) resumeGame();
+  }
+
+  /** 选中一个构件：高亮 + 属性卡。 */
+  function selectBimElement(id: string | null) {
+    if (!bimHandle) return;
+    bimHandle.highlight(id);
+    if (!id) {
+      ui.selectBimElement(null);
+      return;
+    }
+    const found = bimElementIndex.get(id);
+    if (!found) return;
+    ui.selectBimElement({
+      id: found.id,
+      name: found.name,
+      type: typeLabelOf(found.type),
+      floor: found.floor,
+      volume: found.volume,
+      elevation: found.elevation,
+      material: found.material,
+    });
+  }
+
+  /** 坐下：位置与朝向来自座椅代理上的 userData，起身时由 Player 自己还原。 */
+  function sitDown(anchor: { x: number; y: number; z: number; yaw: number; eyeOffset: number }) {
+    player.sitAt(anchor.x, anchor.y, anchor.z, anchor.yaw, anchor.eyeOffset);
+    ui.setSeated(true);
+    ui.setPrompt(null);
+    audio.click();
+    ui.toast("坐下了。按 E 或 W 起身。", 2600);
+  }
+
+  function standUpFromSeat(announce = true) {
+    if (!player.seated) return;
+    player.standUp();
+    ui.setSeated(false);
+    if (announce) ui.toast("已起身。", 1800);
+  }
+
   function aimTelescope() {
     const target = world.signalLookAt;
     const dx = target.x - camera.position.x;
@@ -379,6 +549,10 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   function enterTelescope() {
     if (!world.isSignalConstellationOpen && !world.toggleSignalConstellation()) return;
     telescopeActive = true;
+    // 相机贴近镜筒时模型会挡住整个窄视野，取景期间把它藏起来，退出再放回。
+    world.setTelescopeModelVisible(false);
+    ui.setScopeEntries(world.signalEntries);
+    ui.setScopeOpen(true);
     aimTelescope();
     ui.toast(
       "望远镜已对准信号星座。移动鼠标观察，瞄准星点按 E 读取；移动、WASD 或空处 E 退出。",
@@ -389,18 +563,34 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   function exitTelescope(announce = false) {
     if (!telescopeActive) return;
     telescopeActive = false;
+    world.setTelescopeModelVisible(true);
+    ui.setScopeOpen(false);
     if (world.isSignalConstellationOpen) world.toggleSignalConstellation();
     if (announce) ui.toast("已收起望远镜，视野恢复正常。", 2600);
   }
 
   function interact() {
     if (!state.started || ui.isBlocking) return;
+    // 坐着时任何 E 都当起身，不看准星对准了什么——否则对着空处按 E 会没反应。
+    if (player.seated) {
+      standUpFromSeat();
+      return;
+    }
     const target = currentTarget;
     if (!target) {
       if (telescopeActive) exitTelescope(true);
       return;
     }
     audio.click();
+    // 星点内容走 DOM 目镜面板：3D 贴图在 24° 视野里发糊，文字交给 DOM 渲染才清楚。
+    const reading = world.signalReadings.get(target.id);
+    if (reading) {
+      ui.setScopeReading({ ...reading, id: target.id });
+      currentTarget = null;
+      checkTimer = 0;
+      save();
+      return;
+    }
     if (world.readSignal(target.id)) {
       if (target.id === "monitor") collectEgg("workstation");
       currentTarget = null;
@@ -430,18 +620,33 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
         }
         break;
       }
+      case "bim":
+        void enterBim();
+        break;
       case "arcade":
         openArcade();
         break;
       case "cinema":
         openCinema();
         break;
-      case "duck":
-        world.pokeDuck();
+      case "duck": {
+        const third = world.feedDuck(camera.position);
         audio.quack();
-        collectEgg("duck");
-        ui.toast("嘎。鸭子不太想理你，但它记得你来过。", 3600);
+        if (third) {
+          collectEgg("duck");
+          ui.toast("面包屑一撒，鸭子带着一群鱼游过来了。它记住你了。", 4200);
+        } else {
+          ui.toast("面包屑撒下去了，鸭子和鱼都往这边游。", 2800);
+        }
         break;
+      }
+      case "cinema-seat": {
+        const seat = target.object.userData.seat as
+          | { x: number; y: number; z: number; yaw: number; eyeOffset: number }
+          | undefined;
+        if (seat) sitDown(seat);
+        break;
+      }
       case "ball":
         world.shootBall();
         audio.shoot();
@@ -498,12 +703,13 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   function save() {
     if (!state.started) return;
+    const pose = player.savedPosition;
     const data: SaveData = {
-      x: player.position.x,
-      y: player.position.y,
-      z: player.position.z,
-      yaw: player.yaw,
-      pitch: player.pitch,
+      x: pose.x,
+      y: pose.y,
+      z: pose.z,
+      yaw: pose.yaw,
+      pitch: pose.pitch,
       time: environment.time,
       weather: weather.type,
       quality: state.quality,
@@ -544,6 +750,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     currentTarget = null;
     if (!state.started || ui.isBlocking || !player.enabled) {
       ui.setPrompt(null);
+      return;
+    }
+    // 坐着时准星不再找东西，提示固定成「起身」——否则会一直显示「坐下看电影」。
+    if (player.seated) {
+      ui.setPrompt("起身");
       return;
     }
     raycaster.setFromCamera(screenCenter, camera);
@@ -592,6 +803,29 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       return;
     }
 
+    // BIM 查看器打开时，整个键盘交给它：Esc 退出，其余按键都不该漏到世界那边。
+    if (ui.isBimOpen) {
+      if (event.code === "Escape") {
+        event.preventDefault();
+        exitBim();
+      }
+      return;
+    }
+
+    if (event.code === "KeyH") {
+      event.preventDefault();
+      if (ui.isHelpOpen) ui.closeHelp();
+      else if (!ui.isBlocking) ui.openHelp();
+      return;
+    }
+
+    // 坐着时按 W（或 ↑）起身。只用前进键：A/S/D 坐着时什么也不做，
+    // 这样「坐着不会移动」和「按 W 起身」两条不会打架。
+    if (player.seated && !ui.isBlocking && (event.code === "KeyW" || event.code === "ArrowUp")) {
+      standUpFromSeat();
+      return;
+    }
+
     if (event.code === "KeyP") {
       event.preventDefault();
       if (!ui.isBlocking) ui.openProfile("overview");
@@ -613,6 +847,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     } else if (event.code === "Escape") {
       if (ui.is2DOpen) close2D();
       else if (ui.isSettingsOpen) ui.closeSettings();
+      else if (ui.isHelpOpen) ui.closeHelp();
     }
   }, { signal: events.signal });
 
@@ -737,20 +972,35 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       camera.updateProjectionMatrix();
       environment.update(dt, camera.position);
       weather.update(dt, camera.position);
+      world.setRainAmount(weather.rainAmount);
       world.update(dt, elapsed);
       world.setNight(environment.night);
       audio.setRain(rainLevel());
       renderer.render(scene, camera);
+      if (!firstFrameRendered) {
+        firstFrameRendered = true;
+        window.clearInterval(loadTimer);
+        ui.setLoading(100);
+      }
       return;
     }
 
     if (telescopeActive && (ui.isBlocking || !player.enabled)) exitTelescope(false);
+
+    // BIM 查看器占着整个画面：世界这一帧不推进也不渲染，只把 BIM 场景画出来。
+    if (bimHandle && ui.isBimOpen) {
+      bimHandle.resize(window.innerWidth, window.innerHeight);
+      bimHandle.controls.update();
+      renderer.render(bimHandle.scene, bimHandle.camera);
+      return;
+    }
 
     if (!ui.isBlocking) {
       player.update(dt);
       if (telescopeActive && player.hasMoveInput) exitTelescope(true);
       environment.update(dt, camera.position);
       weather.update(dt, camera.position);
+      world.setRainAmount(weather.rainAmount);
       world.update(dt, elapsed);
       world.setNight(environment.night);
       audio.setRain(rainLevel());
@@ -772,6 +1022,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     } else {
       // The world keeps breathing behind the settings panel; time itself pauses.
       weather.update(dt * 0.35, camera.position);
+      world.setRainAmount(weather.rainAmount);
       world.update(dt * 0.35, elapsed);
       world.setNight(environment.night);
       audio.setRain(rainLevel());
@@ -779,6 +1030,22 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
     renderer.render(scene, camera);
   }
+
+  // BIM 查看器里的点选：用 click 而不是 pointerdown，这样拖动旋转结束时不会误选。
+  // 只有几乎没移动的点击才算「点了一下」。
+  let bimDown: { x: number; y: number } | null = null;
+  canvas.addEventListener("pointerdown", (event) => {
+    if (!ui.isBimOpen || !bimHandle) return;
+    bimDown = { x: event.clientX, y: event.clientY };
+  }, { signal: events.signal });
+  canvas.addEventListener("pointerup", (event) => {
+    if (!ui.isBimOpen || !bimHandle || !bimDown) return;
+    const moved = Math.hypot(event.clientX - bimDown.x, event.clientY - bimDown.y);
+    bimDown = null;
+    if (moved > 4) return; // 拖动过，是在转模型，不是点构件
+    const hit = bimHandle.pick(event.clientX, event.clientY);
+    selectBimElement(hit ? hit.id : null);
+  }, { signal: events.signal });
 
   window.addEventListener("resize", () => {
     const width = window.innerWidth;
@@ -796,15 +1063,14 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   }, { signal: events.signal });
   window.addEventListener("beforeunload", () => save(), { signal: events.signal });
 
-  // The world is assembled synchronously; this short progress pass gives the
-  // browser a chance to paint the start screen before the first frame.
+  // The world is assembled synchronously, so this progress pass exists only to
+  // give the start screen something readable to show. It stops at 90% and the
+  // first rendered frame below is what actually completes it — otherwise the
+  // bar would claim "ready" while nothing had been drawn yet.
   let loadValue = 0;
+  let firstFrameRendered = false;
   const loadTimer = window.setInterval(() => {
-    loadValue += 7 + Math.random() * 9;
-    if (loadValue >= 100) {
-      loadValue = 100;
-      window.clearInterval(loadTimer);
-    }
+    loadValue = Math.min(90, loadValue + 7 + Math.random() * 9);
     ui.setLoading(loadValue);
   }, 55);
   animate();
@@ -819,6 +1085,10 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     camera,
     scene,
     audio,
+    /** BIM 查看器的句柄；不在查看器里时为 null。验收要读它自己的相机与统计。 */
+    get bim() {
+      return bimHandle;
+    },
   };
   if (import.meta.env.DEV) {
     (window as unknown as { __xia?: unknown }).__xia = debugHandle;

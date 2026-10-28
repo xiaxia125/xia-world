@@ -31,7 +31,7 @@ export function SettingsSheet({ snapshot, handlers, onClose }: SettingsSheetProp
   };
 
   return (
-    <aside id="settings" className={`sheet${snapshot.settingsOpen ? "" : " is-hidden"}`} aria-label="设置" aria-hidden={!snapshot.settingsOpen}>
+    <aside id="settings" className={`sheet${snapshot.settingsOpen ? "" : " is-hidden"}`} aria-label="设置" aria-hidden={!snapshot.settingsOpen} inert={!snapshot.settingsOpen}>
       <div className="sheet-head">
         <div>
           <span className="sheet-kicker">SYSTEM</span>

@@ -8,7 +8,7 @@ type OverlayProps = {
 /** Displays the selected embedded experience while keeping the world mounted underneath. */
 export function Overlay({ snapshot, handlers }: OverlayProps) {
   return (
-    <section id="overlay" className={`overlay${snapshot.overlayOpen ? "" : " is-hidden"}`} aria-hidden={!snapshot.overlayOpen} aria-label="内嵌页面">
+    <section id="overlay" className={`overlay${snapshot.overlayOpen ? "" : " is-hidden"}`} aria-hidden={!snapshot.overlayOpen} inert={!snapshot.overlayOpen} aria-label="内嵌页面">
       <header className="overlay-bar">
         <div className="overlay-title">
           <i className="dot live" />

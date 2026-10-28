@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { PROFILE } from "../profile";
-import { SIGNALS, type SignalId } from "../signals";
+import { SIGNALS, type SignalCopy, type SignalId } from "../signals";
 import type { AABB, Interactable, Quality, ShelterZone } from "./types";
 /**
  * Builds the walkable Three.js scene and exposes its colliders and interactable surfaces.
@@ -15,11 +15,11 @@ import {
   posterTexture,
   profileBoardTexture,
   projectTexture,
+  puddleMaskTexture,
   radialTexture,
   screenTexture,
   radioTunerTexture,
   secretTexture,
-  signalCardTexture,
   signalTexture,
   signTexture,
 } from "./textures";
@@ -133,6 +133,18 @@ export class VoxelWorld {
   private signalConstellationLineMaterial?: THREE.LineBasicMaterial;
   private signalPulse?: THREE.Mesh;
   private telescopeInteractable?: Interactable;
+  private telescopeModel?: THREE.Group;
+  /** 星座星点的可读内容，按 interactable id 索引，供望远镜目镜面板渲染。 */
+  readonly signalReadings = new Map<string, SignalCopy>();
+
+  /** 目镜面板目录：按星点出现顺序列出这一片星空里的信号。 */
+  get signalEntries(): ReadonlyArray<{ id: string; index: string; label: string }> {
+    return [...this.signalReadings.entries()].map(([id, { index, label }]) => ({
+      id,
+      index,
+      label,
+    }));
+  }
 
   private readonly blocks: BoxSpec[] = [];
   private readonly glowBlocks: BoxSpec[] = [];
@@ -195,6 +207,29 @@ export class VoxelWorld {
     life: number;
   };
 
+  /** 鸭子当前所在的池面坐标。巡游与喂食都只是移动这个点，位置不靠解析式直接写。 */
+  private readonly duckPos = new THREE.Vector3();
+  /** 面包屑落点。喂食后鸭子和鱼都把巡游中心往这里拉。 */
+  private readonly feedPoint = new THREE.Vector3(23.2, 0.3, 24.1);
+  /** 面包屑剩余时间（秒）。归零后 gather 会自己慢慢散开。 */
+  private feedTimer = 0;
+  /** 0..1 的聚集程度，用阻尼过渡，避免第一帧整群鱼瞬移。 */
+  private feedGather = 0;
+  /** 累计喂食次数，第三次解锁彩蛋。 */
+  private feedCount = 0;
+  private crumbs?: {
+    points: THREE.Points;
+    velocities: Float32Array;
+    life: number;
+  };
+  /** 室外路面的水膜层。只在雨天浮现，室内地面不在其中。 */
+  private wetLayer?: THREE.Mesh;
+  private wetMaterial?: THREE.MeshPhongMaterial;
+  /** 0..1 的积水量，雨天缓慢上涨、雨停后 30 秒左右退干。 */
+  private wetness = 0;
+  /** 当前雨量 0..1，由 engine 每帧写入（取自 WeatherSystem.rainAmount）。 */
+  private rainAmount = 0;
+
   private elapsed = 0;
 
   constructor(scene: THREE.Scene, opts: WorldOptions) {
@@ -227,12 +262,14 @@ export class VoxelWorld {
     this.buildArcade();
     this.buildRooftop();
     this.buildCinema();
+    this.buildBimPavilion();
     this.buildPond();
     this.buildTrees();
     this.buildLamps();
     this.buildPerimeter();
 
     this.createStaticMeshes(opts.quality);
+    this.buildWetLayer();
     this.createBall();
     this.createFountain();
     this.createDuck();
@@ -261,6 +298,119 @@ export class VoxelWorld {
       (star.halo.material as THREE.MeshBasicMaterial).opacity = quality === "high" ? 0.16 : 0;
     });
     if (this.signalConstellationOpen) this.updateSignalConstellation(0);
+    // 低画质下积水更淡，和粒子减半一样是省性能的表现
+    if (this.wetMaterial) this.wetMaterial.opacity = this.wetOpacity();
+  }
+
+  /**
+   * 雨天积水：在室外路面上铺一层半透明水膜。
+   *
+   * 材质是 MeshLambertMaterial，没有 roughness，改不了「湿」的观感，
+   * 所以另起一层带高光的 Phong 薄膜叠在路面上方 12 mm —— 比任何一块地面
+   * 都高，避免共面闪烁；室内地面（展厅 / 工作室 / 密室）不在这层里，
+   * 所以站在室内看不见积水。
+   */
+  private buildWetLayer() {
+    // 每块都是 { x0, x1, z0, z1, y }：y 取该块地面的顶面 + 0.012
+    const rects = [
+      { x0: -13, x1: 13, z0: -13, z1: 13, y: 0.082 },    // 广场
+      { x0: -3, x1: 3, z0: 13, z1: 31, y: 0.072 },       // 南向主路
+      { x0: -3, x1: 3, z0: -17, z1: -13, y: 0.072 },     // 北向主路
+      { x0: 13, x1: 16, z0: -1.6, z1: 3.6, y: 0.072 },   // 东向支路
+      { x0: -17, x1: -13, z0: -1.6, z1: 3.6, y: 0.072 }, // 西向支路
+      { x0: 3, x1: 15.6, z0: 18.4, z1: 21.6, y: 0.072 }, // 池塘支路
+      { x0: 16, x1: 36, z0: -5, z1: 9, y: 0.172 },       // 篮球场
+      { x0: -10, x1: 10, z0: -31, z1: -17, y: 7.522 },   // 天台
+    ];
+
+    // 一个网格装下所有路面：每块两个三角形，UV 用世界坐标除以 TILE 平铺，
+    // 这样水洼大小不随路面尺寸变化，接缝处也能连上。
+    const TILE = 9;
+    const positions = new Float32Array(rects.length * 4 * 3);
+    const uvs = new Float32Array(rects.length * 4 * 2);
+    const indices: number[] = [];
+    rects.forEach((r, i) => {
+      const base = i * 4;
+      const corners: [number, number][] = [
+        [r.x0, r.z0],
+        [r.x1, r.z0],
+        [r.x1, r.z1],
+        [r.x0, r.z1],
+      ];
+      corners.forEach(([x, z], k) => {
+        const v = (base + k) * 3;
+        positions[v] = x;
+        positions[v + 1] = r.y;
+        positions[v + 2] = z;
+        const u = (base + k) * 2;
+        uvs[u] = x / TILE;
+        uvs[u + 1] = z / TILE;
+      });
+      // 顶点按 (x0,z0)→(x1,z0)→(x1,z1)→(x0,z1) 排，从 +y 往下看是顺时针，
+      // 直接按 base,base+1,base+2 组三角会得到朝 -y 的法线、从上方看不见，
+      // 所以这里反过来绕，让正面朝上。
+      indices.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    });
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+    geo.setIndex(indices);
+    geo.computeVertexNormals();
+
+    const mask = puddleMaskTexture();
+    mask.wrapS = THREE.RepeatWrapping;
+    mask.wrapT = THREE.RepeatWrapping;
+
+    this.wetMaterial = new THREE.MeshPhongMaterial({
+      // 深青灰，叠在路面上是「打湿变深」而不是刷了层蓝漆
+      color: 0x2b3a3c,
+      transparent: true,
+      opacity: 0,
+      alphaMap: mask,
+      // 高光给足才有水面反光条；shininess 太高会整片发白，取中间值
+      shininess: 70,
+      specular: 0x9fd4dd,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+
+    this.wetLayer = new THREE.Mesh(geo, this.wetMaterial);
+    this.wetLayer.name = "wet-ground";
+    this.wetLayer.renderOrder = 2;
+    this.wetLayer.visible = false;
+    this.wetLayer.userData.noShadow = true;
+    this.wetLayer.receiveShadow = true;
+    this.group.add(this.wetLayer);
+  }
+
+  /** 积水层的不透明度：低画质更淡。 */
+  private wetOpacity() {
+    return this.wetness * (this.quality === "high" ? 0.82 : 0.42);
+  }
+
+  /** 雨量 0..1，engine 每帧写一次。室内不削弱——积水层本来就只铺在室外路面上。 */
+  setRainAmount(amount: number) {
+    this.rainAmount = amount;
+  }
+
+  /**
+   * 推进积水：雨天涨得快，雨停后慢慢退干。
+   *
+   * @param dt 帧间隔（秒）
+   * @param rain 当前雨量 0..1，来自 WeatherSystem.rainAmount
+   */
+  private updateWetness(dt: number, rain: number) {
+    if (!this.wetLayer || !this.wetMaterial) return;
+    // 上涨 λ=0.45（约 7 秒到 95%），退干 λ=0.1（约 30 秒退到 5%）——
+    // 下雨来得快、干得慢，符合真实路面。
+    const lambda = rain > this.wetness ? 0.45 : 0.1;
+    this.wetness = THREE.MathUtils.damp(this.wetness, rain, lambda, dt);
+    const visible = this.wetness > 0.01;
+    this.wetLayer.visible = visible;
+    if (visible) this.wetMaterial.opacity = this.wetOpacity();
   }
 
   // ---------------------------------------------------------------- build
@@ -1242,7 +1392,89 @@ export class VoxelWorld {
     for (const z of [-26.2, -21.8]) {
       this.addBox(-2.2, 7.72, z, 2.2, 0.42, 1.1, C.woodDark, { tag: "rooftop-cinema" });
       this.addBox(-1.2, 8.25, z, 0.18, 1.3, 1.1, C.woodDark, { tag: "rooftop-cinema" });
+
+      // 座椅本体是 InstancedMesh 里的一块，没有独立对象可拾取，所以每张椅子配一个
+      // 拾取代理：material.visible = false 让它不渲染，raycast 仍然能命中。
+      // 代理贴在靠背东面（x = -1.2 那块），做成一块高 2.8 的立板：从过道走近时
+      // 眼高 9.13，站到座面上是 9.55，两种高度都能被这块板接住。
+      const seatProxy = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 2.8, 1.1),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      seatProxy.position.set(-1.08, 8.9, z);
+      seatProxy.name = `cinema-seat-${z}`;
+      // 坐下后眼睛落在 8.68（座面 7.93 之上 0.75），比站立眼高 9.13 低 45 cm。
+      seatProxy.userData.seat = { x: -2.05, y: 7.51, z, yaw: Math.PI / 2, eyeOffset: -0.45 };
+      this.group.add(seatProxy);
+      this.interactables.push({
+        id: "cinema-seat",
+        object: seatProxy,
+        label: "坐下看电影",
+        maxDistance: 2.6,
+      });
     }
+  }
+
+  /**
+   * 天台东南角的 BIM 观测台：一座 1.5 m 见方的体素建筑剪影 + 一块标识牌。
+   *
+   * 位置刻意选在 (4.8, -19.2)：影院座椅在 x=-2.2、银幕在 x=-9.72、
+   * 投影仪在 (7.1, -24)、楼梯口在 x=11.58，这里都避开了，天台中间的
+   * 走道和座椅到银幕的视线也不挡。整块走现有 blocks → InstancedMesh 管道，
+   * 不新增 draw call。
+   */
+  private buildBimPavilion() {
+    const x = 4.8;
+    const z = -19.2;
+    const base = 7.51;
+
+    // 底座：一块深色台面把剪影从屋顶上拎出来
+    this.addBox(x, base + 0.06, z, 1.9, 0.12, 1.9, C.stoneDark, { tag: "rooftop-bim" });
+
+    // 三层退台：每层向上收进一点，读起来是一栋楼而不是一个方块
+    const tiers = [
+      { y: 0.42, w: 1.5, d: 1.5, h: 0.72 },
+      { y: 1.16, w: 1.22, d: 1.22, h: 0.76 },
+      { y: 1.96, w: 0.94, d: 0.94, h: 0.84 },
+    ];
+    for (const tier of tiers) {
+      this.addBox(x, base + tier.y, z, tier.w, tier.h, tier.d, C.glass, { tag: "rooftop-bim" });
+    }
+
+    // 核心筒：偏在一角，比退台高出一截
+    this.addBox(x - 0.34, base + 1.62, z + 0.34, 0.36, 3.2, 0.36, C.metal, { tag: "rooftop-bim" });
+
+    // 屋顶设备：两台风机组 + 一根天线
+    this.addBox(x + 0.22, base + 2.5, z - 0.18, 0.42, 0.22, 0.42, C.metalLight, { tag: "rooftop-bim" });
+    this.addBox(x - 0.06, base + 2.72, z + 0.12, 0.3, 0.2, 0.3, C.metalLight, { tag: "rooftop-bim" });
+    this.addBox(x - 0.34, base + 3.42, z + 0.34, 0.06, 0.5, 0.06, C.metal, { solid: false, tag: "rooftop-bim" });
+
+    // 标识牌立在南侧，站在天台上从楼梯口方向过来正好读到
+    this.addSign(
+      signTexture("BIM", "BUILDING MODEL / 构件模型", "#9fe6ff"),
+      1.5,
+      0.375,
+      x,
+      base + 0.62,
+      z + 1.05,
+    );
+
+    // 拾取代理：剪影是 InstancedMesh 里的方块，没有独立对象可命中，
+    // 所以立一块不可见的面板接住射线（raycast 不看 material.visible）。
+    const proxy = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 2.6, 1.7),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    proxy.position.set(x, base + 1.3, z);
+    proxy.name = "bim-pavilion-proxy";
+    this.group.add(proxy);
+
+    this.interactables.push({
+      id: "bim",
+      object: proxy,
+      label: "查看 BIM 建筑模型",
+      maxDistance: 4.2,
+    });
   }
 
   private buildRooftop() {
@@ -1353,6 +1585,7 @@ export class VoxelWorld {
       }
     });
     this.group.add(scope);
+    this.telescopeModel = scope;
     this.telescopeInteractable = {
       id: "telescope",
       object: scope,
@@ -1486,7 +1719,6 @@ export class VoxelWorld {
     const coreGeometry = new THREE.SphereGeometry(0.16, sphereSegments, sphereSegments);
     const haloGeometry = new THREE.SphereGeometry(1, sphereSegments, sphereSegments);
     const hitGeometry = new THREE.SphereGeometry(1.3, 8, 6);
-    const panelGeometry = new THREE.PlaneGeometry(2.9, 1.7);
     const coreMaterial = new THREE.MeshBasicMaterial({ color: 0xf1ffb3, toneMapped: false });
     const haloMaterial = new THREE.MeshBasicMaterial({
       color: C.lime,
@@ -1530,40 +1762,19 @@ export class VoxelWorld {
       hitArea.userData.noShadow = true;
       object.add(hitArea);
 
-      const base = signalCardTexture(`${entry.copy.index} / ${entry.copy.label}`, ["瞄准星点，按 E 读取。"]);
-      const surface = new THREE.Mesh(
-        panelGeometry,
-        new THREE.MeshBasicMaterial({
-          map: base,
-          side: THREE.DoubleSide,
-          toneMapped: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -1,
-          polygonOffsetUnits: -1,
-        }),
-      );
-      // The telescope looks south from the roof. Face the readable side toward
-      // it instead of showing the mirror image on the back of the plane.
-      surface.position.set(0, -1.2, 0.02);
-      surface.rotation.y = Math.PI;
-      surface.userData.noShadow = true;
-      object.add(surface);
-
       const id = `signal-${entry.id}`;
+      // 星点只做取景目标。文字不再贴成 3D 平面：24° 视野下那块贴图必然发糊，
+      // 内容改由 DOM 目镜面板渲染，任何分辨率下都清晰。
+      this.signalReadings.set(id, entry.copy);
       const interactable: Interactable = {
         id,
         object,
-        label: `读取星点 · ${entry.copy.label}`,
+        label: `信号 · ${entry.copy.label}`,
         maxDistance: 35,
       };
       this.signalConstellation.add(object);
       this.signalStarPositions.push(position);
       this.signalStars.push({ object, core, halo, interactable, phase: index * 0.8 });
-      this.registerSignal(
-        id,
-        surface,
-        signalCardTexture(entry.copy.title, [entry.copy.body, `方向：${entry.copy.tags.join(" · ")}`]),
-      );
     }
 
     const segmentsPerLink = highQuality ? 14 : 5;
@@ -1718,16 +1929,110 @@ export class VoxelWorld {
     this.group.add(duck);
     this.duck = duck;
     this.duckBaseY = duck.position.y;
+    // 鸭子只有 0.42 高、还一直在水面游，准星很难精确压住它。挂一个跟着鸭子走的
+    // 不可见代理，把可交互体积撑到 1.6³（世界 y 约 0.37..1.97）：从岸边站立
+    // 眼高 2.02 往下看，任何俯角都能命中；作为 duck 的子节点，鸭子游到哪它跟到哪。
+    const duckHit = new THREE.Mesh(
+      new THREE.BoxGeometry(1.6, 1.6, 1.6),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    duckHit.position.set(0, 0.8, 0);
+    duckHit.name = "duck-hit";
+    duck.add(duckHit);
     this.interactables.push({
       id: "duck",
-      object: duck,
-      label: "和鸭子打个招呼",
-      maxDistance: 3.8,
+      object: duckHit,
+      label: "喂鸭子",
+      maxDistance: 3.0,
     });
   }
 
   pokeDuck() {
     this.duckPoke = 1.4;
+  }
+
+  /**
+   * 撒一把面包屑。落点取鸭子身边一点（不直接压在鸭子身上，否则它会原地打转），
+   * 鸭子和鱼群在接下来 3 秒里往这里靠；第三次喂食返回 true 让 engine 解锁彩蛋。
+   *
+   * @param from 玩家位置，用来决定从哪个方向撒，让落点落在鸭子靠玩家的一侧
+   * @returns 这是第几次喂食，达到 3 次时返回 true 表示应当记彩蛋
+   */
+  feedDuck(from: THREE.Vector3): boolean {
+    // 落点：在鸭子和玩家之间取中点，再限制在水面范围内，免得面包屑撒到岸上。
+    // 水面是 addWater(22, 0.24, 24, 11.2, 7.0) → x 16.4..27.6 / z 20.5..27.5，
+    // 两边各留 0.5 的余量，让面包屑落在水上而不是池沿上。
+    const px = this.duck ? this.duck.position.x : 17.7;
+    const pz = this.duck ? this.duck.position.z : 24.1;
+    const tx = THREE.MathUtils.clamp((px + from.x) / 2, 16.9, 27.1);
+    const tz = THREE.MathUtils.clamp((pz + from.z) / 2, 21.0, 27.0);
+    this.feedPoint.set(tx, 0.3, tz);
+    this.feedTimer = 3;
+    this.feedCount += 1;
+    this.pokeDuck();
+    this.spawnCrumbs(tx, tz);
+    return this.feedCount >= 3;
+  }
+
+  /** 面包屑粒子：低画质减半，都落在水面上随水轻微浮动。 */
+  private spawnCrumbs(x: number, z: number) {
+    if (this.crumbs) {
+      this.group.remove(this.crumbs.points);
+      this.crumbs.points.geometry.dispose();
+      (this.crumbs.points.material as THREE.Material).dispose();
+    }
+    const count = this.quality === "high" ? 36 : 18;
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      // 撒成一个半径 0.9 的圆盘，都贴着水面（y 0.30~0.34），不会飞到岸上。
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.sqrt(Math.random()) * 0.9;
+      positions[i * 3] = x + Math.cos(a) * r;
+      positions[i * 3 + 1] = 0.31 + Math.random() * 0.03;
+      positions[i * 3 + 2] = z + Math.sin(a) * r;
+      velocities[i * 3] = (Math.random() - 0.5) * 0.06;
+      velocities[i * 3 + 1] = 0;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.06;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xe8cfa0,
+      size: 0.07,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      sizeAttenuation: true,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = "bread-crumbs";
+    points.userData.noShadow = true;
+    this.group.add(points);
+    this.crumbs = { points, velocities, life: 3.2 };
+  }
+
+  private updateCrumbs(dt: number) {
+    if (!this.crumbs) return;
+    this.crumbs.life -= dt;
+    const { points, velocities, life } = this.crumbs;
+    const mat = points.material as THREE.PointsMaterial;
+    if (life <= 0) {
+      this.group.remove(points);
+      points.geometry.dispose();
+      mat.dispose();
+      this.crumbs = undefined;
+      return;
+    }
+    // 最后 0.8 秒淡出，避免面包屑突然消失。
+    mat.opacity = Math.min(1, life / 0.8);
+    const pos = points.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    for (let i = 0; i < arr.length; i += 3) {
+      arr[i] += velocities[i] * dt;
+      arr[i + 2] += velocities[i + 2] * dt;
+    }
+    pos.needsUpdate = true;
   }
 
   private createFish() {
@@ -2026,12 +2331,6 @@ export class VoxelWorld {
       const index = this.interactables.indexOf(star.interactable);
       if (index !== -1) this.interactables.splice(index, 1);
       star.object.visible = false;
-      const signal = this.signalSurfaces.get(star.interactable.id);
-      if (signal) {
-        signal.open = false;
-        signal.material.map = signal.base;
-        signal.material.needsUpdate = true;
-      }
     });
     this.signalConstellationLine?.geometry.setDrawRange(0, 0);
     if (this.signalPulse) this.signalPulse.visible = false;
@@ -2042,6 +2341,14 @@ export class VoxelWorld {
     }
     if (this.signalConstellationOpen) this.updateSignalConstellation(0);
     return this.signalConstellationOpen;
+  }
+
+  /**
+   * 望远镜模式下把镜筒本身藏起来。相机贴近镜筒，24° 窄视野里模型会直接糊在
+   * 画面前方挡住星座；第一人称望远镜的常规做法是取景时只留目镜后的画面。
+   */
+  setTelescopeModelVisible(visible: boolean) {
+    if (this.telescopeModel) this.telescopeModel.visible = visible;
   }
 
   /** Keeps signal content readable while honoring the system's reduced-motion preference. */
@@ -2332,8 +2639,9 @@ export class VoxelWorld {
     this.elapsed = elapsed;
     this.updateBall(dt);
     this.updateConfetti(dt);
+    this.updateCrumbs(dt);
+    this.updateWetness(dt, this.rainAmount);
     this.updateSignalConstellation(dt);
-
     if (this.shelfGroup) {
       const current = this.shelfGroup.position.x;
       const next = THREE.MathUtils.damp(current, this.shelfTargetX, 5, dt);
@@ -2365,16 +2673,30 @@ export class VoxelWorld {
     if (this.duck) {
       this.duckPoke = Math.max(0, this.duckPoke - dt);
       const bounce = this.duckPoke > 0 ? Math.sin(this.duckPoke * 18) * 0.16 : 0;
+      this.feedTimer = Math.max(0, this.feedTimer - dt);
+      // 聚集程度用阻尼过渡：喂食瞬间从 0 涨到 1，3 秒后自己退回 0，鸭子不会瞬移。
+      this.feedGather = THREE.MathUtils.damp(this.feedGather, this.feedTimer > 0 ? 1 : 0, 2.6, dt);
       const t = elapsed * 0.22;
-      const duckX = 23.2 + Math.cos(t) * 2.4;
-      const duckZ = 24.1 + Math.sin(t) * 1.25;
-      const dx = -Math.sin(t) * 2.4 * 0.22;
-      const dz = Math.cos(t) * 1.25 * 0.22;
-      this.duck.position.set(
-        duckX,
+      // 巡游中心平时在西岸浅水（鸭子爱在岸边觅食），喂食时被拉向面包屑落点。
+      // 池心离西岸 5.6 m，站在岸上够不到 3 m 的交互距离，所以常态就贴着西岸游。
+      const homeX = 17.7;
+      const homeZ = 24.1;
+      const centerX = THREE.MathUtils.lerp(homeX, this.feedPoint.x, this.feedGather);
+      const centerZ = THREE.MathUtils.lerp(homeZ, this.feedPoint.z, this.feedGather);
+      // 聚集时把巡游半径收小，鸭子才会真的停在落点附近而不是绕着它转大圈。
+      const radiusX = THREE.MathUtils.lerp(0.5, 0.3, this.feedGather);
+      const radiusZ = THREE.MathUtils.lerp(1.9, 0.25, this.feedGather);
+      const duckX = centerX + Math.cos(t) * radiusX;
+      const duckZ = centerZ + Math.sin(t) * radiusZ;
+      // 水面范围（addWater 是 11.2 x 7.0，中心 22/24），留 0.6 余量让鸭身不越出池沿。
+      this.duckPos.set(
+        THREE.MathUtils.clamp(duckX, 22 - 5.6 + 0.6, 22 + 5.6 - 0.6),
         this.duckBaseY + Math.sin(elapsed * 2.1) * 0.025 + Math.abs(bounce),
-        duckZ,
+        THREE.MathUtils.clamp(duckZ, 24 - 3.5 + 0.6, 24 + 3.5 - 0.6),
       );
+      const dx = -Math.sin(t) * radiusX * 0.22;
+      const dz = Math.cos(t) * radiusZ * 0.22;
+      this.duck.position.copy(this.duckPos);
       this.duck.rotation.y =
         Math.atan2(-dz, dx) +
         (this.duckPoke > 0 ? Math.sin(this.duckPoke * 20) * 0.8 : 0);
@@ -2382,10 +2704,16 @@ export class VoxelWorld {
 
     for (const fish of this.fishLife) {
       const t = fish.phase + elapsed * fish.speed;
-      const x = 22 + Math.cos(t) * fish.radiusX;
-      const z = 24 + Math.sin(t) * fish.radiusZ;
-      const dx = -Math.sin(t) * fish.radiusX * fish.speed;
-      const dz = Math.cos(t) * fish.radiusZ * fish.speed;
+      // 鱼也往落点聚：巡游中心向 feedPoint 靠、半径收小，但保留各自相位差，
+      // 否则五条鱼会重叠在同一个点上。
+      const cx = THREE.MathUtils.lerp(22, this.feedPoint.x, this.feedGather * 0.85);
+      const cz = THREE.MathUtils.lerp(24, this.feedPoint.z, this.feedGather * 0.85);
+      const rx = THREE.MathUtils.lerp(fish.radiusX, 0.75, this.feedGather);
+      const rz = THREE.MathUtils.lerp(fish.radiusZ, 0.55, this.feedGather);
+      const x = cx + Math.cos(t) * rx;
+      const z = cz + Math.sin(t) * rz;
+      const dx = -Math.sin(t) * rx * fish.speed;
+      const dz = Math.cos(t) * rz * fish.speed;
       fish.group.position.set(x, 0.235 + Math.sin(elapsed * 1.7 + fish.phase) * 0.015, z);
       fish.group.rotation.y = Math.atan2(-dz, dx);
       fish.tail.rotation.y = Math.sin(elapsed * 6 + fish.phase) * 0.55;

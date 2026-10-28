@@ -5,12 +5,13 @@ type HudProps = {
   handlers: UIHandlers;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
+  onOpenHelp: () => void;
 };
 
 /** Renders world status and controls without owning any Three.js state. */
-export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile }: HudProps) {
+export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile, onOpenHelp }: HudProps) {
   return (
-    <section id="hud" className={`hud${snapshot.hudVisible ? "" : " is-hidden"}`} aria-label="世界界面">
+    <section id="hud" className={`hud${snapshot.hudVisible ? "" : " is-hidden"}`} aria-label="世界界面" inert={!snapshot.hudVisible}>
       <header className="hud-top">
         <div className="hud-brand">
           <span className="hud-logo" aria-hidden="true" />
@@ -31,6 +32,9 @@ export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile }: HudPr
           </span>
           <button id="btn-sound" className="icon-button" type="button" title={snapshot.soundOn ? "关闭所有声音" : "开启所有声音"} aria-label={snapshot.soundOn ? "关闭所有声音" : "开启所有声音"} aria-pressed={snapshot.soundOn} onClick={handlers.onSound}>
             <span id="sound-icon" aria-hidden="true">{snapshot.soundOn ? "♫" : "×"}</span>
+          </button>
+          <button id="btn-help" className="icon-button" type="button" title="操作说明 (H)" aria-label="打开操作说明" onClick={onOpenHelp}>
+            <span aria-hidden="true">?</span>
           </button>
           <button id="btn-settings" className="icon-button" type="button" title="设置" aria-label="打开设置" onClick={onOpenSettings}>
             <span aria-hidden="true">≡</span>
@@ -55,6 +59,7 @@ export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile }: HudPr
           <span><kbd>R</kbd> 天气</span>
           <span><kbd>M</kbd> 音乐</span>
           <span><kbd>G</kbd> 街机</span>
+          <span><kbd>H</kbd> 说明</span>
           <span><kbd>ESC</kbd> 鼠标</span>
         </div>
         <div className="hud-badges">

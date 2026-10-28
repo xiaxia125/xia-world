@@ -33,6 +33,8 @@ export interface ProfileEducation {
   major: string;
   degree: string;
   period: string;
+  /** 就读形式，如「非全日制」。与全职工作时间重叠的学历必须如实标注。 */
+  mode?: string;
 }
 
 export interface ProfileSkillGroup {
@@ -71,10 +73,10 @@ export const PROFILE = {
       summary:
         "面向海洋监管场景的多维可视化驾驶舱，融合海图、船舶点位、视频资源与实时预警信息。",
       highlights: [
-        "负责可视化驾驶舱核心页面，基于 ECharts 与 WebSocket 呈现船舶位置、海况与预警信息",
-        "对接海康视频资源，完成 RTSP 播放、切换与多路监控画面展示",
-        "基于 GeoServer 与海图服务融合地图、业务数据和监控资源，支持轨迹追踪与区域围栏",
-        "通过点位聚合、分层加载优化海量船舶与浮标点位的渲染流畅度",
+        "可视化驾驶舱核心页面（海图、船舶点位、预警信息），用 ECharts + WebSocket 承载实时数据",
+        "海康视频资源接入：RTSP 播放、多路切换与监控画面布局，值班人员在同一屏看到现场",
+        "GeoServer 与海图服务融合，把地图、业务数据和监控资源放进同一空间，支持轨迹追踪与区域围栏",
+        "海量点位渲染优化：点位聚合 + 分层加载，船舶与浮标点位随缩放级别稳定呈现",
       ],
       stack: ["Vue 3", "TypeScript", "ECharts", "GeoServer", "WebSocket", "H5 Player", "Vite"],
     },
@@ -86,10 +88,10 @@ export const PROFILE = {
       summary:
         "整合倾斜摄影三维场景、视频资源与业务数据的景区治理驾驶舱，让分散信息在同一空间里被看见。",
       highlights: [
-        "负责驾驶舱核心页面与 ECharts 统计指标开发，支撑大屏实时数据展示",
-        "基于 Hmap 加载倾斜摄影模型，完成三维地图与码头环境还原",
-        "完成多路视频接入、窗口切换与驾驶舱交互动画",
-        "针对地图点位与图层做聚合、分层加载和渲染策略优化",
+        "驾驶舱核心页面与 ECharts 统计指标，支撑大屏的实时数据展示",
+        "Hmap 倾斜摄影模型加载，还原三维地图与码头环境",
+        "多路视频接入、窗口切换与驾驶舱交互动画",
+        "地图点位与图层的聚合、分层加载和渲染策略优化",
       ],
       stack: ["ECharts", "Hmap", "H5Player", "Animation", "三维地图"],
     },
@@ -101,10 +103,10 @@ export const PROFILE = {
       summary:
         "覆盖智慧停车、车船票、活动积分、线上商城与共享球场的本地数字生活服务小程序。",
       highlights: [
-        "基于 UniApp + Vue 搭建小程序架构，负责核心业务页面与功能模块",
-        "封装 Axios 请求、鉴权与异常处理，统一业务数据流",
+        "UniApp + Vue 搭建小程序架构，覆盖智慧停车、车船票、活动积分、线上商城与共享球场五类业务",
+        "封装 Axios 请求、鉴权与异常处理，让各业务模块共用一套数据流",
         "集成腾讯地图、二维码、微信支付与自定义分享",
-        "使用 UCharts 呈现潮汐、天气等数据，完成多业务场景适配",
+        "UCharts 呈现潮汐、天气数据，完成多业务场景适配",
       ],
       stack: ["UniApp", "Vue", "Vuex", "Axios", "UCharts", "腾讯地图", "微信支付"],
     },
@@ -116,10 +118,10 @@ export const PROFILE = {
       summary:
         "面向实体关系分析的可视化平台，支持知识图谱查询、关系展开与第三方系统集成。",
       highlights: [
-        "基于 AntV G6 实现实体节点、关系连线与图谱交互",
-        "完成节点展开、关系查看、缩放拖拽与条件查询结果展示",
-        "通过 iframe 将知识图谱能力嵌入其他业务平台，实现跨系统复用",
-        "使用 patch-package 维护第三方依赖补丁，降低版本管理成本",
+        "AntV G6 实现实体节点、关系连线与图谱交互",
+        "节点展开、关系查看、缩放拖拽与条件查询结果展示",
+        "通过 iframe 把图谱能力嵌入其他业务平台，实现跨系统复用",
+        "用 patch-package 维护第三方依赖补丁，降低版本升级成本",
       ],
       stack: ["Vue 3", "AntV G6", "relation-graph", "patch-package"],
     },
@@ -168,6 +170,7 @@ export const PROFILE = {
       major: "计算机科学与技术",
       degree: "本科",
       period: "2024.03 — 2026.07",
+      mode: "非全日制（在职期间就读）",
     },
     {
       school: "黄河水利职业技术学院",
@@ -175,7 +178,8 @@ export const PROFILE = {
       degree: "专科",
       period: "2017.09 — 2020.07",
     },
-  ],
+    // 标注类型：否则 as const 会让「有 mode」与「没 mode」成为两个不兼容的字面量分支。
+  ] as readonly ProfileEducation[],
   skillGroups: [
     {
       title: "前端基础",
@@ -213,7 +217,9 @@ export const PROFILE = {
     emailUser: EMAIL_USER,
     emailDomain: EMAIL_DOMAIN,
     label: "邮箱联系",
-    note: "公开版档案仅提供邮箱。手机号、年龄、性别、政治面貌等私人信息不对外展示。",
+    github: "https://github.com/xiaxia125",
+    githubRepo: "https://github.com/xiaxia125/xia-world",
+    note: "公开版档案仅提供邮箱与 GitHub。手机号、年龄、性别、政治面貌等私人信息不对外展示。",
   },
 } as const;
 

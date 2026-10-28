@@ -1,4 +1,4 @@
-import * as THREE from "three";
+ import * as THREE from "three";
 import type { AABB } from "./world/types";
 
 const EYE_HEIGHT = 1.62;
@@ -22,6 +22,17 @@ export class Player {
   enabled = false;
   onGround = false;
   touchMode = false;
+  /** 坐姿：只靠禁用位移 + 眼高偏移实现，不碰碰撞体，起身时恢复。 */
+  seated = false;
+  private eyeOffset = 0;
+  private seatSave: {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    pitch: number;
+    velocity: THREE.Vector3;
+  } | null = null;
 
   onStep?: () => void;
   onLockChange?: (locked: boolean) => void;
@@ -174,6 +185,8 @@ export class Player {
   }
 
   queueJump() {
+    // 坐着时不该攒跳跃：起身那一刻把缓冲放出去会让人突然弹一下。
+    if (this.seated) return;
     this.jumpBuffer = JUMP_BUFFER;
   }
 
@@ -193,6 +206,60 @@ export class Player {
 
   respawn(x: number, y: number, z: number) {
     this.setPosition(x, y, z, 0, 0);
+  }
+
+  /**
+   * 坐下：吸附到座位点、朝向朝银幕、眼高下降到坐姿。位移与跳跃在 step() 里被跳过，
+   * 但视角照常可转。存档里不写坐姿，所以把入座前的状态记在内存，起身时原样恢复。
+   */
+  sitAt(x: number, y: number, z: number, yaw: number, eyeOffset: number) {
+    this.seatSave = {
+      x: this.position.x,
+      y: this.position.y,
+      z: this.position.z,
+      yaw: this.yaw,
+      pitch: this.pitch,
+      velocity: this.velocity.clone(),
+    };
+    this.seated = true;
+    this.eyeOffset = eyeOffset;
+    this.position.set(x, y, z);
+    this.yaw = yaw;
+    this.pitch = 0;
+    this.velocity.set(0, 0, 0);
+    this.bobPhase = 0;
+    this.bobAmount = 0;
+    this.syncCamera();
+  }
+
+  standUp() {
+    const saved = this.seatSave;
+    this.seated = false;
+    this.eyeOffset = 0;
+    this.seatSave = null;
+    // 起身往往是用 W 触发的，那个键此刻还按着；不清掉就会一站起来就往前冲。
+    this.keys.clear();
+    if (!saved) {
+      this.syncCamera();
+      return;
+    }
+    this.position.set(saved.x, saved.y, saved.z);
+    this.yaw = saved.yaw;
+    this.pitch = saved.pitch;
+    this.velocity.copy(saved.velocity);
+    this.syncCamera();
+  }
+
+  /**
+   * 存档用的位置：坐着时返回入座前的站位，否则刷新后会从座位里站起来。
+   * 朝向和俯仰也一起回退，避免存档里留下一个朝银幕的姿势。
+   */
+  get savedPosition() {
+    if (this.seatSave) {
+      const { x, y, z, yaw, pitch } = this.seatSave;
+      return { x, y, z, yaw, pitch };
+    }
+    return { x: this.position.x, y: this.position.y, z: this.position.z, yaw: this.yaw, pitch: this.pitch };
   }
 
   update(dt: number) {
@@ -218,6 +285,14 @@ export class Player {
 
   private step(dt: number) {
     this.jumpBuffer = Math.max(0, this.jumpBuffer - dt);
+
+    // 坐着时不动腿：速度清零、不重力、不碰撞，但 onGround 保持为真让视野呼吸稳定。
+    if (this.seated) {
+      this.velocity.set(0, 0, 0);
+      this.onGround = true;
+      this.bobAmount = THREE.MathUtils.damp(this.bobAmount, 0, 8, dt);
+      return;
+    }
 
     const forwardInput =
       (this.keys.has("KeyW") || this.keys.has("ArrowUp") ? 1 : 0) -
@@ -292,7 +367,7 @@ export class Player {
     const bob = this.onGround ? Math.sin(this.bobPhase * 2) * 0.019 * this.bobAmount : 0;
     this.camera.position.set(
       this.position.x,
-      this.position.y + EYE_HEIGHT + this.stepOffset + bob,
+      this.position.y + EYE_HEIGHT + this.eyeOffset + this.stepOffset + bob,
       this.position.z,
     );
     this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
