@@ -1,10 +1,13 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { ui } from "../ui";
 import { HelpPanel } from "./components/HelpPanel";
 import { BimView } from "./components/BimView";
 import { Hud } from "./components/Hud";
-import { Overlay } from "./components/Overlay";
+import { MapPanel } from "./components/MapPanel";
+import { PhotoBar } from "./components/PhotoBar";
+import { PianoBar } from "./components/PianoBar";
 import { ProfilePanel } from "./components/ProfilePanel";
+import { ReadingPanel } from "./components/ReadingPanel";
 import { ScopeView } from "./components/ScopeView";
 import { SettingsSheet } from "./components/SettingsSheet";
 import { StartScreen } from "./components/StartScreen";
@@ -15,26 +18,21 @@ export function WorldInterface() {
   const snapshot = useSyncExternalStore(ui.subscribe, ui.getSnapshot, ui.getSnapshot);
   const handlers = ui.actions;
 
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data === "xia-home:close-2d") handlers.onClose2D(false);
-    };
-    window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
-  }, [handlers]);
-
   return (
     <div id="ui">
       <div className="vignette" aria-hidden="true" />
       <StartScreen loading={snapshot.loading} leaving={snapshot.startLeaving} onEnter={handlers.onEnter} onOpenProfile={() => ui.openProfile("overview")} />
-      <Hud snapshot={snapshot} handlers={handlers} onOpenSettings={() => ui.openSettings()} onOpenProfile={() => ui.openProfile("overview")} onOpenHelp={() => ui.openHelp()} />
+      <Hud snapshot={snapshot} handlers={handlers} onOpenSettings={() => ui.openSettings()} onOpenProfile={() => ui.openProfile("overview")} onOpenHelp={() => ui.openHelp()} onOpenMap={() => ui.openMap()} />
       <SettingsSheet
         snapshot={snapshot}
         handlers={handlers}
         onClose={() => ui.closeSettings()}
       />
       <HelpPanel snapshot={snapshot} />
-      <Overlay snapshot={snapshot} handlers={handlers} />
+      <MapPanel snapshot={snapshot} />
+      <ReadingPanel snapshot={snapshot} />
+      <PhotoBar snapshot={snapshot} handlers={handlers} />
+      <PianoBar snapshot={snapshot} handlers={handlers} />
       <ProfilePanel snapshot={snapshot} />
       <ScopeView snapshot={snapshot} />
       <BimView snapshot={snapshot} />

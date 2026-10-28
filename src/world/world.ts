@@ -1,18 +1,17 @@
 import * as THREE from "three";
 import { PROFILE } from "../profile";
 import { SIGNALS, type SignalCopy, type SignalId } from "../signals";
-import type { AABB, Interactable, Quality, ShelterZone } from "./types";
+import type { AABB, Interactable, Quality, ShelterZone, WeatherType } from "./types";
 /**
  * Builds the walkable Three.js scene and exposes its colliders and interactable surfaces.
  * React owns the surrounding controls; this module keeps world state and rendering-side resources together.
  */
 import {
-  arcadeTexture,
   ballTexture,
-  cinemaTexture,
+  codeTexture,
   floorSignTexture,
+  islandMapTexture,
   neonTexture,
-  posterTexture,
   profileBoardTexture,
   projectTexture,
   puddleMaskTexture,
@@ -22,6 +21,7 @@ import {
   secretTexture,
   signalTexture,
   signTexture,
+  whiteboardTexture,
 } from "./textures";
 
 const C = {
@@ -110,6 +110,9 @@ export class VoxelWorld {
     { minX: -10.3, maxX: 10.3, minZ: -31.3, maxZ: -16.7, roofY: 7.55 },
     { minX: -36.4, maxX: -16.6, minZ: -5.4, maxZ: 9.4, roofY: 6.85 },
     { minX: 0.6, maxX: 9.4, minZ: -38.4, maxZ: -30.9, roofY: 4.85 },
+    // 五年小径尽头的凉亭和营地帐篷：雨雪不会穿过屋顶落进来。
+    { minX: -40.8, maxX: -34.8, minZ: 27.4, maxZ: 33.4, roofY: 3.7 },
+    { minX: 37.4, maxX: 41.2, minZ: 15.3, maxZ: 19.2, roofY: 3.0 },
   ];
 
   scores = 0;
@@ -229,6 +232,58 @@ export class VoxelWorld {
   private wetness = 0;
   /** 当前雨量 0..1，由 engine 每帧写入（取自 WeatherSystem.rainAmount）。 */
   private rainAmount = 0;
+  /** 当前天气类型，用来决定风车转速和晾衣绳状态。 */
+  private weatherType: WeatherType = "clear";
+  /** 玩家平面位置，由 engine 每帧写入；猫和鸽子靠它决定要不要靠近/躲开。 */
+  private readonly playerPos = new THREE.Vector2(0, 30);
+
+  /** 小径石碑的正文。engine 读到同 id 时打开 DOM 阅读面板，而不是翻 3D 贴图。 */
+  readonly plaqueReadings = new Map<string, SignalCopy>();
+
+  private night = 0;
+
+  private campfireOn = false;
+  private campfireLight?: THREE.PointLight;
+  private campfireFlames: THREE.Mesh[] = [];
+  private campfireEmbers?: {
+    points: THREE.Points;
+    velocities: Float32Array;
+    life: number;
+  };
+
+  private windmillBlades?: THREE.Group;
+  private windsock?: THREE.Group;
+  private barrelWater?: THREE.Mesh;
+  private barrelFill = 0.35;
+  private laundryClothes: THREE.Object3D[] = [];
+  private chimeTubes: THREE.Object3D[] = [];
+
+  /** 钢琴白键：每个键单独一个 mesh，按下时只下沉它自己。 */
+  private readonly pianoKeys: THREE.Mesh[] = [];
+  private readonly pianoKeyPress: number[] = [];
+  /** 琴凳坐点。进入钢琴模式时引擎把玩家吸到这里，起身时再放回原位。 */
+  readonly pianoSeat = { x: -7.4, y: 0.05, z: 5.0, yaw: Math.PI / 2, eyeOffset: -0.28 };
+
+  private cat?: THREE.Group;
+  private catPetTimer = 0;
+  private catState: "idle" | "walk" | "sit" = "idle";
+  private catTarget = new THREE.Vector3(7.2, 0.18, 6.2);
+  private catHearts?: {
+    points: THREE.Points;
+    velocities: Float32Array;
+    life: number;
+  };
+
+  private fireflies?: THREE.Points;
+  private readonly fireflyBase: THREE.Vector3[] = [];
+  private readonly fireflyPhase: number[] = [];
+
+  private readonly pigeons: Array<{
+    group: THREE.Group;
+    home: THREE.Vector3;
+    timer: number;
+    phase: number;
+  }> = [];
 
   private elapsed = 0;
 
@@ -259,11 +314,19 @@ export class VoxelWorld {
     this.buildGallery();
     this.buildStudio();
     this.buildSecretRoom();
-    this.buildArcade();
     this.buildRooftop();
-    this.buildCinema();
+    this.buildRooftopSkyDeck();
     this.buildBimPavilion();
     this.buildPond();
+    this.buildPondDock();
+    this.buildTrail();
+    this.buildCamp();
+    this.buildWindmill();
+    this.buildGarden();
+    this.buildLookout();
+    this.buildWeatherProps();
+    this.buildMapBoard();
+    this.buildPiano();
     this.buildTrees();
     this.buildLamps();
     this.buildPerimeter();
@@ -274,6 +337,9 @@ export class VoxelWorld {
     this.createFountain();
     this.createDuck();
     this.createFish();
+    this.createCat();
+    this.createFireflies();
+    this.createPigeons();
 
     this.setShadows(opts.quality === "high");
   }
@@ -300,6 +366,10 @@ export class VoxelWorld {
     if (this.signalConstellationOpen) this.updateSignalConstellation(0);
     // 低画质下积水更淡，和粒子减半一样是省性能的表现
     if (this.wetMaterial) this.wetMaterial.opacity = this.wetOpacity();
+    if (this.fireflies) {
+      const count = this.fireflyBase.length;
+      this.fireflies.geometry.setDrawRange(0, quality === "high" ? count : Math.floor(count / 2));
+    }
   }
 
   /**
@@ -321,6 +391,16 @@ export class VoxelWorld {
       { x0: 3, x1: 15.6, z0: 18.4, z1: 21.6, y: 0.072 }, // 池塘支路
       { x0: 16, x1: 36, z0: -5, z1: 9, y: 0.172 },       // 篮球场
       { x0: -10, x1: 10, z0: -31, z1: -17, y: 7.522 },   // 天台
+      { x0: -31.2, x1: -13, z0: 9.2, z1: 11.4, y: 0.072 }, // 五年小径（横）
+      { x0: -31.2, x1: -28.8, z0: 11.4, z1: 31.6, y: 0.072 }, // 五年小径（纵）
+      { x0: -35.8, x1: -28.8, z0: 29.2, z1: 31.6, y: 0.072 }, // 凉亭入口
+      { x0: 13, x1: 31, z0: 12.4, z1: 14.6, y: 0.072 },  // 营地路
+      { x0: 30.5, x1: 41, z0: 13.2, z1: 20.6, y: 0.062 }, // 营地空地
+      { x0: 35, x1: 37.2, z0: -17, z1: -5, y: 0.072 },   // 风车路（纵）
+      { x0: 28.6, x1: 36, z0: -19, z1: -16.6, y: 0.072 }, // 风车路（横）
+      { x0: 27, x1: 42.5, z0: -33.5, z1: -19, y: 0.062 }, // 菜园空地
+      { x0: -16.2, x1: -14, z0: -24, z1: -1.4, y: 0.072 }, // 观景台路（纵）
+      { x0: -34, x1: -14, z0: -23.5, z1: -19.4, y: 0.072 }, // 观景台路（横）
     ];
 
     // 一个网格装下所有路面：每块两个三角形，UV 用世界坐标除以 TILE 平铺，
@@ -571,27 +651,6 @@ export class VoxelWorld {
     return mesh;
   }
 
-  private addPoster(
-    texture: THREE.Texture,
-    w: number,
-    h: number,
-    x: number,
-    y: number,
-    z: number,
-    rotationY: number,
-    frame = 0x1d2621,
-  ) {
-    const backing = new THREE.Mesh(
-      new THREE.BoxGeometry(w + 0.18, h + 0.18, 0.1),
-      new THREE.MeshLambertMaterial({ color: frame }),
-    );
-    backing.position.set(x, y, z);
-    backing.rotation.y = rotationY;
-    backing.translateZ(-0.07);
-    this.group.add(backing);
-    return this.addSign(texture, w, h, x, y, z, rotationY);
-  }
-
   private buildGround() {
     this.addBox(0, -0.6, 0, 100, 1.2, 100, C.grass, { edge: false, tag: "ground" });
 
@@ -628,6 +687,9 @@ export class VoxelWorld {
     // pond spur: continue from the south path and stop at the pond's stone edge.
     // 起点对齐主路东缘 x=3，与主路不重叠，避免两块同高地面共面闪烁。
     this.addFloor(3, 15.6, 18.4, 21.6, 0.06, 0.12, C.path, { edge: false, tag: "pond-spur" });
+    // 池塘支路继续往东北，沿池塘北岸通到篝火营地（旧营地直路已移除）。
+    // 与支路只在 x=15.6 处接边，不叠放同高地面。
+    this.addFloor(15.6, 30.5, 16.8, 19.8, 0.06, 0.12, C.path, { edge: false, tag: "camp-path" });
 
     // path edging
     const edge = (x: number, z: number, w: number, d: number) =>
@@ -1031,22 +1093,77 @@ export class VoxelWorld {
     this.addBox(0, 0.15, -23.3, 6.4, 0.03, 4.4, 0x7a443c, { solid: false, edge: false });
     this.addBox(0, 0.17, -23.3, 5.6, 0.02, 3.6, 0xb87962, { solid: false, edge: false });
 
-    // desk
+    // ---------------------------------------------------------------- 阅读角
+    // 西墙这条原本空着，摆一组沙发和边桌，工作室就不是只有一张工位。
+    this.addBox(-7.2, 0.15, -20.4, 4.4, 0.03, 3.6, 0x4c594d, { solid: false, edge: false });
+    this.addBox(-7.2, 0.17, -20.4, 3.8, 0.02, 3.0, 0x6b7a66, { solid: false, edge: false });
+
+    this.addBox(-9.05, 0.36, -20.4, 1.35, 0.44, 3.0, C.woodDark, { tag: "studio" });
+    this.addBox(-8.95, 0.62, -20.4, 1.1, 0.16, 2.85, 0x4f6a56, { solid: false });
+    this.addBox(-9.5, 0.98, -20.4, 0.3, 0.9, 3.0, 0x45604d, { solid: false });
+    this.addBox(-9.05, 0.78, -21.8, 1.25, 0.5, 0.2, 0x45604d, { solid: false });
+    this.addBox(-9.05, 0.78, -19.0, 1.25, 0.5, 0.2, 0x45604d, { solid: false });
+    for (const z of [-21.1, -19.7]) {
+      this.addBox(-8.95, 0.76, z, 0.7, 0.14, 0.7, 0x6f8a70, { solid: false, edge: false });
+    }
+
+    // 边桌 + 一本书 + 杯子
+    this.addBox(-8.5, 0.42, -18.15, 0.55, 0.06, 0.55, C.wood);
+    this.addBox(-8.5, 0.2, -18.15, 0.09, 0.4, 0.09, C.woodDark, { solid: false });
+    this.addBox(-8.5, 0.47, -18.15, 0.34, 0.03, 0.24, 0x4f6f8f, { solid: false, edge: false });
+    this.addBox(-8.5, 0.55, -18.4, 0.12, 0.14, 0.12, C.white, { solid: false, edge: false });
+
+    // 茶几
+    this.addBox(-6.9, 0.42, -20.4, 1.0, 0.08, 0.6, C.wood, { tag: "studio-table" });
+    for (const x of [-7.32, -6.48]) {
+      for (const z of [-20.64, -20.16]) {
+        this.addBox(x, 0.22, z, 0.06, 0.36, 0.06, C.woodDark, { solid: false });
+      }
+    }
+    this.addBox(-7.0, 0.5, -20.45, 0.4, 0.06, 0.28, 0x7b5a3c, { solid: false, edge: false });
+    this.addBox(-6.55, 0.5, -20.3, 0.2, 0.08, 0.2, 0x3f6070, { solid: false, edge: false });
+
+    // 落地灯：白天是摆件，晚上给阅读角留一盏暖光。
+    this.addBox(-9.3, 0.14, -22.9, 0.32, 0.04, 0.32, C.metal, { solid: false, edge: false });
+    this.addBox(-9.3, 0.92, -22.9, 0.06, 1.55, 0.06, C.metal, { solid: false, edge: false });
+    this.addBox(-9.3, 1.78, -22.9, 0.5, 0.34, 0.5, 0x3a423d, { solid: false });
+    this.addBox(-9.3, 1.58, -22.9, 0.36, 0.04, 0.36, 0xffe3b0, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+
+    // ---------------------------------------------------------------- 工作台
+    // 桌面 1.41 m；显示器、副屏、键盘、鼠标都按落在这块板上算高度。
     this.addBox(-4.4, 1.32, -28.7, 6.0, 0.18, 2.0, C.wood);
     for (const x of [-6.9, -1.9]) {
       for (const z of [-29.5, -27.9]) {
         this.addBox(x, 0.65, z, 0.16, 1.3, 0.16, C.woodDark);
       }
     }
-    this.addBox(-4.4, 0.9, -28.8, 0.9, 1.1, 0.8, C.woodDark);
-    this.addBox(-4.4, 1.85, -29.0, 1.9, 1.15, 0.16, C.black);
-    this.addBox(-4.4, 1.42, -28.95, 1.3, 0.3, 0.5, C.metal);
+    // 右侧抽屉柜，三个抽屉面朝房间。
+    this.addBox(-1.75, 0.72, -28.85, 0.8, 1.2, 0.75, C.woodDark);
+    for (let i = 0; i < 3; i += 1) {
+      this.addBox(-1.75, 0.32 + i * 0.36, -28.46, 0.68, 0.26, 0.04, 0x6a4a32, {
+        solid: false,
+        edge: false,
+      });
+      this.addBox(-1.75, 0.32 + i * 0.36, -28.43, 0.3, 0.03, 0.03, C.metal, {
+        solid: false,
+        edge: false,
+      });
+    }
+
+    // 主屏：仍保留公开档案和彩蛋计数。
+    this.addBox(-4.6, 1.95, -29.02, 1.85, 1.08, 0.14, C.black);
+    this.addBox(-4.6, 1.435, -29.0, 1.0, 0.04, 0.5, C.metal, { solid: false, edge: false });
+    this.addBox(-4.6, 1.62, -29.0, 0.12, 0.36, 0.1, C.metal, { solid: false, edge: false });
     const screen = this.addSign(
       screenTexture(this.scores, this.eggCount),
       1.72,
       0.98,
-      -4.4,
-      1.86,
+      -4.6,
+      1.95,
       -28.9,
     );
     screen.name = "monitor";
@@ -1064,18 +1181,63 @@ export class VoxelWorld {
       "组件封装与接口联调",
     ], true));
 
-    this.addBox(-4.4, 1.36, -27.8, 2.6, 0.12, 0.7, 0x2a302d);
-    for (let i = 0; i < 8; i += 1) {
-      this.addBox(-5.4 + i * 0.3, 1.43, -27.8, 0.18, 0.03, 0.4, 0x3f4641, {
-        solid: false,
-        edge: false,
-      });
-    }
+    // 副屏竖着放，跑的是编辑器和构建日志。
+    this.addBox(-6.3, 2.02, -29.02, 0.72, 1.2, 0.12, C.black);
+    this.addBox(-6.3, 1.435, -29.0, 0.5, 0.04, 0.3, C.metal, { solid: false, edge: false });
+    this.addSign(codeTexture(), 0.64, 1.1, -6.3, 2.02, -28.92);
 
-    // chair: the backrest is on the south side so the sitter faces the desk.
-    this.addBox(-4.4, 0.62, -26.4, 1.0, 0.16, 1.0, C.black);
-    this.addBox(-4.4, 1.15, -25.9, 1.0, 1.0, 0.14, C.black);
-    this.addBox(-4.4, 0.25, -26.4, 0.18, 0.5, 0.18, C.metal);
+    // 键盘：桌面顶 1.41，键帽从 1.45 起，不再埋进板子里。
+    this.addBox(-4.4, 1.445, -27.95, 2.2, 0.05, 0.62, 0x2a302d, {
+      solid: false,
+      edge: false,
+    });
+    for (let row = 0; row < 3; row += 1) {
+      for (let i = 0; i < 9; i += 1) {
+        this.addBox(-5.3 + i * 0.21, 1.475, -28.12 + row * 0.16, 0.16, 0.02, 0.12, 0x3f4641, {
+          solid: false,
+          edge: false,
+        });
+      }
+    }
+    this.addBox(-2.9, 1.42, -27.95, 0.46, 0.02, 0.4, 0x1d2621, {
+      solid: false,
+      edge: false,
+    });
+    this.addBox(-2.9, 1.455, -27.95, 0.14, 0.05, 0.22, 0x3f4641, {
+      solid: false,
+      edge: false,
+    });
+
+    // 桌面小物：杯子、笔筒、绿植、台灯、一摞书。
+    this.addBox(-1.95, 1.52, -28.2, 0.17, 0.2, 0.17, C.white, { solid: false, edge: false });
+    this.addBox(-1.85, 1.54, -28.2, 0.04, 0.12, 0.08, C.white, { solid: false, edge: false });
+    this.addBox(-6.6, 1.58, -27.85, 0.16, 0.3, 0.16, C.woodDark, { solid: false });
+    for (const [dx, c] of [[-0.04, C.red], [0.01, C.metalLight], [0.05, C.lime]] as const) {
+      this.addBox(-6.6 + dx, 1.78, -27.85, 0.03, 0.24, 0.03, c, { solid: false, edge: false });
+    }
+    this.addBox(-7.05, 1.53, -29.1, 0.26, 0.22, 0.26, C.woodDark, { solid: false });
+    this.addBox(-7.05, 1.74, -29.1, 0.42, 0.26, 0.42, C.leaf, { solid: false, edge: false });
+    this.addBox(-1.75, 1.44, -29.25, 0.3, 0.05, 0.3, C.metal, { solid: false, edge: false });
+    this.addBox(-1.75, 1.78, -29.25, 0.06, 0.68, 0.06, C.metal, { solid: false, edge: false });
+    this.addBox(-1.75, 2.12, -29.05, 0.44, 0.1, 0.28, C.woodDark, { solid: false });
+    this.addBox(-1.75, 2.05, -29.02, 0.34, 0.03, 0.2, 0xffe3b0, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+    this.addBox(-7.0, 1.46, -27.95, 0.46, 0.06, 0.3, 0x9a5a4c, { solid: false, edge: false });
+    this.addBox(-7.0, 1.51, -27.92, 0.4, 0.05, 0.28, 0x4f6f8f, { solid: false, edge: false });
+
+    // 办公椅：座面 + 靠背 + 扶手 + 十字脚，替换掉原来那块 1×1 的黑色凳背。
+    this.addBox(-4.4, 0.08, -26.95, 0.95, 0.06, 0.16, C.metal, { solid: false, edge: false });
+    this.addBox(-4.4, 0.08, -26.95, 0.16, 0.06, 0.95, C.metal, { solid: false, edge: false });
+    this.addBox(-4.4, 0.33, -26.95, 0.13, 0.5, 0.13, C.metal, { solid: false });
+    this.addBox(-4.4, 0.6, -26.95, 0.66, 0.14, 0.62, 0x3c4340, { solid: false });
+    this.addBox(-4.4, 1.02, -26.6, 0.62, 0.72, 0.14, 0x3c4340, { solid: false });
+    for (const dx of [-0.38, 0.38]) {
+      this.addBox(-4.4 + dx, 0.78, -26.75, 0.08, 0.06, 0.46, C.metal, { solid: false, edge: false });
+      this.addBox(-4.4 + dx, 0.62, -26.95, 0.05, 0.3, 0.05, C.metal, { solid: false, edge: false });
+    }
 
     // shelves on east wall
     this.addBox(9.3, 2.2, -21.2, 0.8, 4.4, 3.6, C.wood);
@@ -1091,59 +1253,57 @@ export class VoxelWorld {
       }
     }
 
-    // posters on the back wall
-    this.addSign(
-      signTexture("WORKING SIGNALS", "01—03 / READ EACH SIGNAL", "#d8ff5f"),
-      6.6,
-      1.05,
-      -5.0,
-      6.5,
-      -30.6,
-    );
-    const interfacePoster = this.addPoster(
-      posterTexture("01", "XIA HOME", "3D PERSONAL SITE / 2026", "A world you can walk into.", ["#11251b", "#d8ff5f", "#f1ecdf"]),
-      2.25,
-      3.0,
-      -7.7,
-      4.25,
-      -30.7,
-      0,
-    );
-    this.interactables.push({ id: "poster-interface", object: interfacePoster, label: "读取界面方向", maxDistance: 4.4 });
-    this.registerSignal("poster-interface", interfacePoster, signalTexture("界面方向", [
-      "Vue 2/3 · React · TypeScript",
-      "把复杂页面整理成可操作的路径。",
-    ]));
+    // 立式白板：原来三张海报和一条 WORKING SIGNALS 横幅占着整面墙，
+    // 现在合成一块板，界面 / 数据 / 交互写成同一条工作链，只读一次。
+    this.addBox(1.35, 1.42, -30.62, 3.2, 2.1, 0.1, C.woodDark, { solid: false });
+    const board = this.addSign(whiteboardTexture(), 3.0, 1.9, 1.35, 1.45, -30.55);
+    for (const x of [-0.15, 2.85]) {
+      this.addBox(x, 0.24, -30.55, 0.09, 0.5, 0.09, C.metal, { solid: false });
+      this.addBox(x, 0.06, -30.55, 0.12, 0.06, 0.62, C.metal, { solid: false });
+    }
+    this.addBox(1.35, 0.46, -30.44, 2.7, 0.05, 0.14, C.metal, { solid: false, edge: false });
+    for (const [dx, color] of [[-0.9, C.red], [0, 0x3f6070], [0.9, C.lime]] as const) {
+      this.addBox(1.35 + dx, 0.49, -30.44, 0.02, 0.02, 0.2, color, { solid: false, edge: false });
+    }
+    this.interactables.push({
+      id: "studio-board",
+      object: board,
+      label: "看白板",
+      maxDistance: 4.4,
+    });
+    this.plaqueReadings.set("studio-board", {
+      index: "01",
+      label: "工作室 · 白板",
+      title: "一块白板，三种做法",
+      body: "界面先理路径：不急着加动效，先把用户从入口到结果要走的那几步摆平。数据换尺度：同一组数字，在驾驶舱、地图和手机上是三种读法。交互留退路：把入口做明显，把返回、撤销和错误提示一起做完。三件事其实是同一条线——让密集的信息有结构、有路径、能被使用。",
+      tags: ["界面", "数据", "交互"],
+    });
 
-    const dataPoster = this.addPoster(
-      posterTexture("02", "DATA / MAP", "VUE · ECHARTS · MAP", "Make complex information legible.", ["#1e2333", "#ff8a4c", "#e9e4d8"]),
-      2.25,
-      3.0,
-      -3.2,
-      4.25,
-      -30.7,
-      0,
-    );
-    this.interactables.push({ id: "poster-data", object: dataPoster, label: "读取数据方向", maxDistance: 4.4 });
-    this.registerSignal("poster-data", dataPoster, signalTexture("数据方向", [
-      "ECharts · 地图 · 数据可视化",
-      "让信息在合适的尺度上被看懂。",
-    ]));
+    // 工作台上方的置物板：书、相机、一个小盆栽。
+    this.addBox(-4.6, 2.62, -30.66, 4.6, 0.08, 0.36, C.wood, { solid: false });
+    const shelfBookColors = [0x9a5a4c, 0x4f6f8f, 0x7b8a4f, 0xc4a45a, 0x6e5b7e, 0x4f8a7e];
+    for (let i = 0; i < 7; i += 1) {
+      this.addBox(
+        -6.4 + i * 0.34,
+        2.82,
+        -30.66,
+        0.2,
+        0.3 + (i % 3) * 0.05,
+        0.24,
+        shelfBookColors[i % shelfBookColors.length]!,
+        { solid: false, edge: false },
+      );
+    }
+    this.addBox(-3.1, 2.78, -30.66, 0.34, 0.24, 0.26, 0x2f3733, { solid: false, edge: false });
+    this.addBox(-2.7, 2.74, -30.66, 0.14, 0.16, 0.16, 0x1d2621, { solid: false, edge: false });
+    this.addBox(-2.05, 2.76, -30.66, 0.24, 0.2, 0.24, C.woodDark, { solid: false });
+    this.addBox(-2.05, 2.92, -30.66, 0.36, 0.16, 0.36, C.leaf, { solid: false, edge: false });
 
-    const interactionPoster = this.addPoster(
-      posterTexture("03", "INTERACTION", "REACT · THREE.JS · UNIAPP", "Interfaces that invite exploration.", ["#2c2320", "#e5c07b", "#f1ecdf"]),
-      2.2,
-      2.95,
-      -9.72,
-      4.35,
-      -24.8,
-      Math.PI / 2,
-    );
-    this.interactables.push({ id: "poster-interaction", object: interactionPoster, label: "读取交互方向", maxDistance: 4.4 });
-    this.registerSignal("poster-interaction", interactionPoster, signalTexture("交互方向", [
-      "Three.js · UniApp · H5",
-      "让同一条信息在不同设备上继续工作。",
-    ]));
+    // 墙钟：工作室里唯一一块不发光的东西，提醒这里也有下班时间。
+    this.addBox(-8.5, 3.35, -30.66, 0.6, 0.6, 0.08, C.woodDark, { solid: false });
+    this.addBox(-8.5, 3.35, -30.6, 0.48, 0.48, 0.02, C.white, { solid: false, edge: false });
+    this.addBox(-8.5, 3.43, -30.57, 0.03, 0.18, 0.02, C.black, { solid: false, edge: false });
+    this.addBox(-8.43, 3.35, -30.56, 0.16, 0.03, 0.02, C.black, { solid: false, edge: false });
 
     // plant
     this.addBox(7.8, 0.45, -18.6, 0.9, 0.9, 0.9, C.woodDark);
@@ -1157,6 +1317,20 @@ export class VoxelWorld {
     this.group.add(light);
     this.poolLights.push(light);
     this.poolLightBase.push(24);
+
+    // 阅读角落灯：夜里这块应该比工位更暖一点，人才会想坐过去。
+    const cornerLamp = new THREE.PointLight(0xffc98a, 0, 7, 2);
+    cornerLamp.position.set(-9.0, 1.55, -22.9);
+    this.group.add(cornerLamp);
+    this.poolLights.push(cornerLamp);
+    this.poolLightBase.push(7);
+
+    // 桌面台灯：只照亮键盘那一小块，屏幕本身是自发光的。
+    const deskLamp = new THREE.PointLight(0xffd9a6, 0, 4.5, 2);
+    deskLamp.position.set(-1.75, 2.0, -29.1);
+    this.group.add(deskLamp);
+    this.poolLights.push(deskLamp);
+    this.poolLightBase.push(5);
   }
 
   private buildBookshelf() {
@@ -1265,17 +1439,52 @@ export class VoxelWorld {
     this.addWallZ(frontWallZ, 7.4, x1 + 0.2, 0, 4.8, 0x424f45);
     this.addWallZ(frontWallZ, 4.0, 7.4, 3.4, 4.8, 0x424f45);
 
-    // terminal
-    this.addBox(5.5, 0.9, -37.1, 3.6, 1.8, 1.2, 0x26322b);
-    this.addBox(5.5, 1.25, -36.9, 3.2, 0.16, 1.0, 0x34443a);
-    this.addBox(5.5, 2.0, -37.35, 2.0, 1.3, 0.12, 0x18241d);
-    const terminal = this.addSign(secretTexture(), 1.8, 1.2, 5.5, 2.0, -37.28);
+    // 窄控制台：一台 CRT、一块键盘，和外面那张宽办公桌明显不是一个地方。
+    this.addBox(5.4, 0.86, -37.5, 2.4, 0.1, 0.8, 0x2c3830);
+    for (const x of [4.36, 6.44]) {
+      this.addBox(x, 0.43, -37.55, 0.1, 0.86, 0.1, C.metal, { solid: false });
+      this.addBox(x, 0.7, -37.86, 0.08, 0.6, 0.08, C.metal, { solid: false });
+    }
+    // 正面挡板 + 散热条：从门口看是一台设备，不是一张空长凳。
+    this.addBox(5.4, 0.52, -37.11, 2.2, 0.62, 0.06, 0x3b4740, { solid: false });
+    for (let i = 0; i < 9; i += 1) {
+      this.addBox(5.4, 0.28 + i * 0.05, -37.07, 1.9, 0.02, 0.03, 0x2a332d, {
+        solid: false,
+        edge: false,
+      });
+    }
+    this.addBox(5.4, 0.5, -37.07, 0.06, 0.5, 0.04, C.metal, { solid: false, edge: false });
+    this.addBox(6.0, 0.78, -37.07, 0.18, 0.03, 0.03, 0x72ffad, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+    this.addBox(5.4, 0.5, -37.55, 2.2, 0.06, 0.06, C.metal, { solid: false, edge: false });
+    // 台灯压在桌角，屏幕不亮的时候也能看清键盘。
+    this.addBox(6.24, 0.98, -37.72, 0.06, 0.16, 0.06, C.metal, { solid: false, edge: false });
+    this.addBox(6.24, 1.08, -37.62, 0.3, 0.05, 0.18, 0x2f3a33, { solid: false, edge: false });
+    this.addBox(6.24, 1.05, -37.56, 0.24, 0.02, 0.1, 0xffe3b0, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+
+    this.addBox(5.4, 1.31, -37.62, 1.1, 0.85, 0.72, 0x1c2721);
+    this.addBox(5.4, 0.95, -37.18, 1.0, 0.05, 0.34, 0x39453c, { solid: false, edge: false });
+    // 键帽压在键盘底板上，别再横穿过 CRT 屏幕。
+    for (let i = 0; i < 4; i += 1) {
+      this.addBox(5.4, 0.985, -37.3 + i * 0.07, 0.94, 0.02, 0.05, 0x45524a, {
+        solid: false,
+        edge: false,
+      });
+    }
+    const terminal = this.addSign(secretTexture(), 0.84, 0.62, 5.4, 1.33, -37.25);
     terminal.name = "terminal";
     this.interactables.push({
       id: "terminal",
       object: terminal,
       label: "读取留言",
-      maxDistance: 3.2,
+      maxDistance: 3.4,
     });
     this.registerSignal("terminal", terminal, signalTexture("工作线索", [
       "Vite · Webpack · Axios · WebSocket",
@@ -1283,12 +1492,83 @@ export class VoxelWorld {
       "在真实业务里把复杂信息做清楚。",
     ], true));
 
-    // desk chair
-    this.addBox(5.5, 0.58, -35.5, 1.0, 0.16, 1.0, C.black);
-    this.addBox(5.5, 1.12, -35.0, 1.0, 1.0, 0.14, C.black);
+    // 矮凳：不是办公椅，谁值班谁坐。
+    this.addBox(5.4, 0.47, -36.25, 0.5, 0.08, 0.5, C.wood, { solid: false });
+    for (const x of [5.2, 5.6]) {
+      for (const z of [-36.45, -36.05]) {
+        this.addBox(x, 0.23, z, 0.06, 0.46, 0.06, C.woodDark, { solid: false });
+      }
+    }
+    this.addBox(5.4, 0.24, -36.25, 0.34, 0.04, 0.34, C.metal, { solid: false, edge: false });
 
-    // poster
-    this.addSign(secretTexture(), 2.0, 2.0, 9.32, 2.5, -34.4, -Math.PI / 2);
+    // 旧地毯：把凳子从水泥地上拎出来。
+    this.addBox(5.4, 0.115, -34.8, 2.8, 0.03, 1.9, 0x3d4740, { solid: false, edge: false });
+
+    // 两座机柜：面板、散热栅和一排状态灯，和工作室的显示器区分开。
+    for (const z of [-36.1, -34.3]) {
+      this.addBox(1.9, 1.0, z, 0.8, 2.0, 1.4, 0x232d27, { tag: "secret" });
+      this.addBox(2.31, 1.0, z, 0.04, 1.7, 1.1, 0x2f3a33, { solid: false, edge: false });
+      for (let i = 0; i < 5; i += 1) {
+        this.addBox(2.34, 0.45 + i * 0.28, z, 0.02, 0.05, 0.86, 0x45524a, {
+          solid: false,
+          edge: false,
+        });
+      }
+      for (let i = 0; i < 6; i += 1) {
+        this.addBox(2.34, 1.55, z - 0.48 + i * 0.19, 0.03, 0.06, 0.06, i % 3 === 0 ? C.lime : 0x72ffad, {
+          glow: true,
+          solid: false,
+          edge: false,
+        });
+      }
+      // 机柜顶上盘着的线
+      this.addBox(1.9, 2.06, z, 0.5, 0.08, 0.9, 0x171f1b, { solid: false, edge: false });
+    }
+
+    // 东墙档案架：铁架 + 文件盒，纸质归档和机房放在同一间。
+    for (const y of [0.6, 1.3, 2.0, 2.7]) {
+      this.addBox(8.65, y, -35.0, 0.7, 0.06, 2.8, 0x55605a, { solid: false, edge: false });
+    }
+    for (const x of [8.32, 8.98]) {
+      for (const z of [-36.38, -33.62]) {
+        this.addBox(x, 1.4, z, 0.07, 2.8, 0.07, C.metal, { solid: false });
+      }
+    }
+    const fileColors = [0x6b7266, 0x7a6b52, 0x4f5a62, 0x8a7d63, 0x5e6b5e];
+    for (let row = 0; row < 4; row += 1) {
+      for (let i = 0; i < 5; i += 1) {
+        const h = 0.38 + ((row + i) % 3) * 0.05;
+        this.addBox(8.64, 0.63 + row * 0.7 + h / 2, -36.24 + i * 0.58, 0.5, h, 0.44, fileColors[(row + i) % fileColors.length]!, {
+          solid: false,
+          edge: false,
+        });
+      }
+    }
+
+    // 角落里的纸箱：搬家没拆完的那一批。
+    this.addBox(7.9, 0.36, -32.2, 0.7, 0.5, 0.7, 0x9a7c53, { solid: false });
+    this.addBox(7.9, 0.63, -32.2, 0.12, 0.04, 0.7, 0x7d6242, { solid: false, edge: false });
+    this.addBox(7.55, 0.2, -32.55, 0.5, 0.38, 0.5, 0x8a6c46, { solid: false });
+
+    // 吊灯：这间屋子没有窗，全靠它和人说话。
+    this.addBox(5.4, 4.0, -35.2, 0.04, 1.0, 0.04, C.metal, { solid: false, edge: false });
+    this.addBox(5.4, 3.42, -35.2, 0.5, 0.18, 0.5, 0x2f3a33, { solid: false });
+    this.addBox(5.4, 3.3, -35.2, 0.36, 0.03, 0.36, 0xffe3b0, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+
+    // 东墙铁牌：不再复读门口的 “YOU FOUND IT”。
+    this.addSign(
+      signTexture("ARCHIVE 05", "NOT ON THE MAP / KEEP IT QUIET", "#9fe6ff"),
+      2.0,
+      0.5,
+      8.97,
+      3.2,
+      -35.0,
+      -Math.PI / 2,
+    );
 
     // The room is sealed from the sky, so it needs its own permanent fill
     // lights rather than relying on the night-scaled exterior lamp pool.
@@ -1308,7 +1588,7 @@ export class VoxelWorld {
     entryFill.position.set(5.5, 2.3, -31.8);
     this.group.add(entryFill);
     const deskFill = new THREE.PointLight(0xffcf9a, 28, 8, 2);
-    deskFill.position.set(5.5, 2.6, -36.8);
+    deskFill.position.set(5.4, 3.05, -35.2);
     this.group.add(deskFill);
 
     // Green accent at the terminal.
@@ -1320,108 +1600,11 @@ export class VoxelWorld {
     this.poolLightBase.push(2.4);
   }
 
-  private buildArcade() {
-    // A hidden cabinet in the room behind the bookshelf.
-    this.addBox(1.75, 1.02, -35.5, 0.9, 2.04, 1.5, C.black, { tag: "arcade-body" });
-    this.addBox(2.24, 0.92, -35.5, 0.12, 0.12, 1.15, C.metalLight);
-    this.addBox(1.74, 2.22, -35.5, 1.02, 0.26, 1.62, C.metal);
-    this.addBox(1.7, 2.42, -35.5, 0.92, 0.1, 1.5, C.orange, { glow: true, solid: false });
-
-    const screen = this.addSign(
-      arcadeTexture(),
-      1.02,
-      0.94,
-      2.23,
-      1.48,
-      -35.5,
-      Math.PI / 2,
-    );
-    screen.name = "arcade-screen";
-    this.interactables.push({
-      id: "arcade",
-      object: screen,
-      label: "投币 · 玩 XIA RUNNER",
-      maxDistance: 3.4,
-    });
-
-    // Joystick and two chunky buttons.
-    this.addBox(2.28, 1.02, -35.1, 0.1, 0.18, 0.1, C.lime, { solid: false, edge: false });
-    this.addBox(2.28, 1.02, -35.78, 0.1, 0.12, 0.1, C.orange, { solid: false, edge: false });
-    this.addBox(2.28, 1.02, -35.56, 0.1, 0.12, 0.1, 0x9fe6ff, { solid: false, edge: false });
-
-    const light = new THREE.PointLight(0x9fe6ff, 2.2, 6, 2);
-    light.position.set(2.8, 2.2, -35.5);
-    this.group.add(light);
-    this.poolLights.push(light);
-    this.poolLightBase.push(2.2);
-  }
-
-  private buildCinema() {
-    // A rooftop projection screen facing the deck.
-    const screen = this.addSign(cinemaTexture(), 5.8, 3.1, -9.72, 9.05, -24, Math.PI / 2);
-    screen.name = "cinema-screen";
-    this.interactables.push({
-      id: "cinema",
-      object: screen,
-      label: "放映 · 天台影院",
-      maxDistance: 4.6,
-    });
-
-    this.addBox(-9.85, 9.05, -24, 0.12, 3.5, 6.2, C.black, { solid: false });
-    this.addBox(-9.7, 10.92, -24, 0.24, 0.14, 6.4, C.metal);
-    this.addBox(-9.7, 7.18, -24, 0.24, 0.14, 6.4, C.metal);
-
-    // Projector on a small stand. The cinema is on the rooftop deck, so all
-    // equipment sits above the deck instead of being buried in the studio shell.
-    this.addBox(7.1, 8.06, -24, 0.7, 1.1, 0.7, C.metal, { tag: "rooftop-cinema" });
-    this.addBox(7.1, 8.71, -24, 0.9, 0.34, 0.65, 0x222a28, { tag: "rooftop-cinema" });
-    // The lens sits on the west face of the projector housing, aimed at the screen.
-    this.addBox(6.62, 8.73, -24, 0.1, 0.18, 0.3, 0xcfefff, {
-      glow: true,
-      solid: false,
-      edge: false,
-    });
-    const lamp = new THREE.PointLight(0xcfefff, 0.9, 8, 2);
-    lamp.position.set(6.55, 8.8, -24);
-    this.group.add(lamp);
-    this.poolLights.push(lamp);
-    this.poolLightBase.push(0.9);
-
-    // A pair of low seats for the screening. Their backrests face away from
-    // the west-facing screen so the viewer sits looking toward the picture.
-    for (const z of [-26.2, -21.8]) {
-      this.addBox(-2.2, 7.72, z, 2.2, 0.42, 1.1, C.woodDark, { tag: "rooftop-cinema" });
-      this.addBox(-1.2, 8.25, z, 0.18, 1.3, 1.1, C.woodDark, { tag: "rooftop-cinema" });
-
-      // 座椅本体是 InstancedMesh 里的一块，没有独立对象可拾取，所以每张椅子配一个
-      // 拾取代理：material.visible = false 让它不渲染，raycast 仍然能命中。
-      // 代理贴在靠背东面（x = -1.2 那块），做成一块高 2.8 的立板：从过道走近时
-      // 眼高 9.13，站到座面上是 9.55，两种高度都能被这块板接住。
-      const seatProxy = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 2.8, 1.1),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
-      seatProxy.position.set(-1.08, 8.9, z);
-      seatProxy.name = `cinema-seat-${z}`;
-      // 坐下后眼睛落在 8.68（座面 7.93 之上 0.75），比站立眼高 9.13 低 45 cm。
-      seatProxy.userData.seat = { x: -2.05, y: 7.51, z, yaw: Math.PI / 2, eyeOffset: -0.45 };
-      this.group.add(seatProxy);
-      this.interactables.push({
-        id: "cinema-seat",
-        object: seatProxy,
-        label: "坐下看电影",
-        maxDistance: 2.6,
-      });
-    }
-  }
-
   /**
    * 天台东南角的 BIM 观测台：一座 1.5 m 见方的体素建筑剪影 + 一块标识牌。
    *
-   * 位置刻意选在 (4.8, -19.2)：影院座椅在 x=-2.2、银幕在 x=-9.72、
-   * 投影仪在 (7.1, -24)、楼梯口在 x=11.58，这里都避开了，天台中间的
-   * 走道和座椅到银幕的视线也不挡。整块走现有 blocks → InstancedMesh 管道，
-   * 不新增 draw call。
+   * 位置刻意选在 (4.8, -19.2)：避开西侧两张躺椅、楼梯口（x=11.58）和
+   * 天台中间的走道。整块走现有 blocks → InstancedMesh 管道，不新增 draw call。
    */
   private buildBimPavilion() {
     const x = 4.8;
@@ -1532,7 +1715,7 @@ export class VoxelWorld {
     });
     this.addBox(11.62, 10.15, -31.02, 2.34, 0.64, 0.06, C.black, { solid: false, edge: false });
     this.addSign(
-      signTexture("ROOFTOP", "CINEMA / RADIO / SKY", "#d8ff5f"),
+      signTexture("ROOFTOP", "LOUNGE / RADIO / SKY", "#d8ff5f"),
       2.2,
       0.55,
       11.62,
@@ -1868,6 +2051,959 @@ export class VoxelWorld {
     this.waterMeshes.push(mesh);
   }
 
+  // ------------------------------------------------------------ new places
+
+  private buildRooftopSkyDeck() {
+    // 影院撤掉后，天台西侧改成两张躺椅：白天晒太阳，晚上看星星。
+    for (const z of [-22.4, -26.4]) {
+      this.addBox(-7.0, 7.64, z, 2.4, 0.18, 1.05, C.woodDark, { tag: "rooftop-lounger" });
+      this.addBox(-8.0, 7.98, z, 0.18, 0.78, 1.05, C.woodDark, { tag: "rooftop-lounger" });
+      this.addBox(-5.95, 7.72, z, 0.22, 0.3, 0.9, C.metal, { tag: "rooftop-lounger" });
+
+      const proxy = new THREE.Mesh(
+        new THREE.BoxGeometry(2.4, 1.7, 1.2),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      proxy.position.set(-7.0, 8.2, z);
+      proxy.name = `sky-lounger-${z}`;
+      proxy.userData.seat = { x: -7.0, y: 7.51, z, yaw: -Math.PI / 2, eyeOffset: -0.5, lookUp: true };
+      this.group.add(proxy);
+      this.interactables.push({
+        id: "sky-lounger",
+        object: proxy,
+        label: "躺下看星星",
+        maxDistance: 2.6,
+      });
+    }
+
+    this.addBox(-9.7, 8.22, -24.4, 0.12, 1.2, 1.2, C.metal, { solid: false });
+    this.addSign(
+      signTexture("NIGHT", "SIT / LOOK UP / 21:00", "#9fe6ff"),
+      1.5,
+      0.375,
+      -9.58,
+      8.7,
+      -24.4,
+      Math.PI / 2,
+    );
+  }
+
+  /**
+   * 西南角的「五年小径」：从广场往西，再折向南，五块石碑把 2021 → NOW
+   * 串起来。石碑正文走 DOM 阅读面板，3D 上只保留年份和一行短标题，
+   * 走近再按 E 展开，避免远处小字糊成一片。
+   */
+  private buildTrail() {
+    this.addFloor(-31.2, -13, 9.2, 11.4, 0.06, 0.12, C.path, { edge: false, tag: "trail" });
+    this.addFloor(-31.2, -28.8, 11.4, 31.6, 0.06, 0.12, C.path, { edge: false, tag: "trail" });
+    this.addFloor(-35.8, -28.8, 29.2, 31.6, 0.06, 0.12, C.path, { edge: false, tag: "trail" });
+
+    const milestones: Array<{
+      id: string;
+      year: string;
+      label: string;
+      x: number;
+      z: number;
+      rot: number;
+      copy: SignalCopy;
+    }> = [
+      {
+        id: "start",
+        year: "2021",
+        label: "入行 / 格物至微",
+        x: -16.5,
+        z: 12.9,
+        rot: Math.PI,
+        copy: {
+          index: "01",
+          label: "2021 · 入行",
+          title: "从业务页面开始",
+          body: "第一份前端工作，做业务页面、接口联调和交互实现。也是在这里养成组件化的习惯：先把重复的部分抽出来，再谈页面。",
+          tags: ["Vue", "接口联调", "组件化"],
+        },
+      },
+      {
+        id: "hailai",
+        year: "2021—2026",
+        label: "海莱云智 / 五年",
+        x: -21.5,
+        z: 12.9,
+        rot: Math.PI,
+        copy: {
+          index: "02",
+          label: "2021—2026 · 海莱云智",
+          title: "海洋、景区、民生与图谱",
+          body: "在同一个团队里跨过四种业务域：可视化驾驶舱、三维地图、小程序和数据平台。核心页面、通用组件、接口联调和性能优化都在这里发生。",
+          tags: ["可视化", "地图", "小程序", "性能"],
+        },
+      },
+      {
+        id: "degree",
+        year: "2024—2026",
+        label: "河南大学 / 在职本科",
+        x: -26.5,
+        z: 12.9,
+        rot: Math.PI,
+        copy: {
+          index: "03",
+          label: "2024—2026 · 河南大学",
+          title: "一边工作，一边把基础补齐",
+          body: "在职读计算机科学与技术本科。不是简历上的装饰，而是把工作中遇到的网络、数据结构和系统问题，放回更完整的知识框架里。",
+          tags: ["计算机科学与技术", "在职", "基础"],
+        },
+      },
+      {
+        id: "projects",
+        year: "5 YEARS",
+        label: "4 个代表项目",
+        x: -27.4,
+        z: 19.0,
+        rot: -Math.PI / 2,
+        copy: {
+          index: "04",
+          label: "五年 · 四个代表项目",
+          title: "把复杂信息做成可操作的界面",
+          body: "海洋监管平台、景区治理驾驶舱、海岛数字生活小程序、知识图谱平台。四件事看起来不同，做的其实是同一件事：让密集的信息有结构、有路径、能被使用。",
+          tags: ["ECharts", "GeoServer", "UniApp", "AntV G6"],
+        },
+      },
+      {
+        id: "cross",
+        year: "CROSS",
+        label: "跨端 / 空间",
+        x: -27.4,
+        z: 25.0,
+        rot: -Math.PI / 2,
+        copy: {
+          index: "05",
+          label: "跨端 · 空间",
+          title: "同一条信息，在不同设备上继续工作",
+          body: "从 H5、UniApp、微信小程序到 Three.js 场景，入口在变，核心路径不能断。这个可以走进来的主页，就是这条思路的一次练习。",
+          tags: ["H5", "UniApp", "Three.js"],
+        },
+      },
+    ];
+
+    for (const stone of milestones) {
+      this.addBox(stone.x, 0.48, stone.z, 1.25, 0.96, 0.55, C.stone, {
+        tag: "trail-stone",
+      });
+      this.addBox(stone.x, 0.98, stone.z, 1.4, 0.1, 0.7, C.stoneDark, {
+        tag: "trail-stone",
+      });
+      const sign = this.addSign(
+        signTexture(stone.year, stone.label, "#e5c07b"),
+        1.8,
+        0.45,
+        stone.x,
+        1.28,
+        stone.z,
+        stone.rot,
+      );
+      sign.name = `milestone-${stone.id}`;
+      this.interactables.push({
+        id: `milestone-${stone.id}`,
+        object: sign,
+        label: `阅读 · ${stone.year}`,
+        maxDistance: 4.0,
+      });
+      this.plaqueReadings.set(`milestone-${stone.id}`, stone.copy);
+    }
+
+    // Pavilion at the end of the trail: the "now" of the timeline.
+    this.addFloor(-40.8, -34.8, 27.4, 33.4, 0.42, 0.4, C.woodLight, {
+      edge: false,
+      tag: "pavilion",
+    });
+    for (const [x, z] of [
+      [-40.2, 28.0],
+      [-35.4, 28.0],
+      [-40.2, 32.8],
+      [-35.4, 32.8],
+    ] as const) {
+      this.addBox(x, 2.05, z, 0.24, 3.3, 0.24, C.woodDark, { tag: "pavilion" });
+    }
+    this.addBox(-37.8, 3.78, 28.0, 5.6, 0.22, 0.3, C.woodDark, { tag: "pavilion" });
+    this.addBox(-37.8, 3.78, 32.8, 5.6, 0.22, 0.3, C.woodDark, { tag: "pavilion" });
+    this.addBox(-40.2, 3.78, 30.4, 0.3, 0.22, 5.4, C.woodDark, { tag: "pavilion" });
+    this.addBox(-35.4, 3.78, 30.4, 0.3, 0.22, 5.4, C.woodDark, { tag: "pavilion" });
+    this.addBox(-37.8, 3.96, 30.4, 6.2, 0.18, 6.6, C.roof, { tag: "pavilion" });
+    this.addBox(-37.8, 4.12, 30.4, 5.0, 0.12, 5.4, 0x585c50, { tag: "pavilion" });
+
+    // 吊灯：天黑后自动亮起来，凉亭晚上也能坐。
+    this.addBox(-37.8, 3.62, 30.4, 0.05, 0.7, 0.05, C.metal, { solid: false, edge: false });
+    this.addBox(-37.8, 3.2, 30.4, 0.42, 0.36, 0.42, 0xffd89a, { glow: true, solid: false });
+    this.addBox(-37.8, 3.42, 30.4, 0.5, 0.08, 0.5, C.metal, { solid: false, edge: false });
+    const pavilionLight = new THREE.PointLight(0xffd2a0, 0, 12, 2);
+    pavilionLight.position.set(-37.8, 2.95, 30.4);
+    this.group.add(pavilionLight);
+    this.poolLights.push(pavilionLight);
+    this.poolLightBase.push(16);
+
+    this.addBench(-39.4, 0.42, 30.4, -1, "x");
+
+    // 邮筒：以前正好杵在凉亭入口的正中间，进出都要绕。挪到木台东南角外侧。
+    this.addBox(-33.0, 0.55, 33.2, 0.16, 1.1, 0.16, C.metal, { solid: false });
+    this.addBox(-33.0, 1.28, 33.2, 0.8, 0.62, 0.55, C.red);
+    this.addBox(-33.0, 1.52, 33.2, 0.86, 0.06, 0.6, C.metal);
+    const mailbox = new THREE.Mesh(
+      new THREE.BoxGeometry(0.9, 0.9, 0.7),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    mailbox.position.set(-33.0, 1.22, 33.2);
+    this.group.add(mailbox);
+    this.interactables.push({
+      id: "mailbox",
+      object: mailbox,
+      label: "打开邮筒 · 联系方式",
+      maxDistance: 3.2,
+    });
+
+    // NOW：挂到凉亭东侧檐下、面朝来路，不再贴着北侧屋檐侧对入口。
+    this.addSign(
+      signTexture("NOW", "OPEN TO WORK / 2026", "#d8ff5f"),
+      3.0,
+      0.75,
+      -35.5,
+      3.3,
+      30.4,
+      Math.PI / 2,
+    );
+  }
+
+  /** 东南角的篝火营地：一圈石头、一堆火、一个帐篷，和一张能坐下的长凳。 */
+  private buildCamp() {
+    // 地面由 buildPaths 沿池塘北岸铺过来，这里只留营地自己的碎石空地。
+    this.addFloor(30.5, 41.0, 13.2, 20.6, 0.05, 0.1, 0x6f6350, { edge: false, tag: "camp" });
+
+    const cx = 35.2;
+    const cz = 17.2;
+    for (let i = 0; i < 9; i += 1) {
+      const a = (i / 9) * Math.PI * 2;
+      this.addBox(cx + Math.cos(a) * 1.15, 0.2, cz + Math.sin(a) * 1.15, 0.42, 0.36, 0.38, C.stoneDark, {
+        edge: false,
+        tag: "camp",
+      });
+    }
+    this.addBox(cx, 0.1, cz, 1.7, 0.14, 1.7, 0x2a2620, { solid: false, edge: false });
+    for (const [dx, dz, rot] of [
+      [-0.32, 0, 0.5],
+      [0.32, 0, -0.5],
+      [0, 0.32, Math.PI / 2],
+    ] as const) {
+      this.addBox(cx + dx, 0.24, cz + dz, 1.15, 0.24, 0.24, C.woodDark, {
+        solid: false,
+        edge: false,
+      });
+      // Rotating a single block is not possible through addBox, so the crossed
+      // log look comes from three separate short logs instead.
+      void rot;
+    }
+
+    const flameMat = new THREE.MeshBasicMaterial({
+      color: 0xff9a4c,
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      const flame = new THREE.Mesh(new THREE.ConeGeometry(0.34 - i * 0.07, 0.9 + i * 0.25, 5), flameMat);
+      flame.position.set(cx + (i - 1) * 0.22, 0.7 + i * 0.08, cz + (i % 2) * 0.16);
+      flame.userData.noShadow = true;
+      flame.visible = this.campfireOn;
+      this.group.add(flame);
+      this.campfireFlames.push(flame);
+    }
+    this.campfireLight = new THREE.PointLight(0xff8a4c, 0, 10, 2);
+    this.campfireLight.position.set(cx, 1.3, cz);
+    this.group.add(this.campfireLight);
+
+    this.spawnCampfireEmbers(cx, cz);
+
+    // Seat proxy on a log, looking at the fire.
+    this.addBox(cx, 0.34, cz + 1.75, 1.5, 0.3, 0.55, C.woodDark, { tag: "camp" });
+    const seat = new THREE.Mesh(
+      new THREE.BoxGeometry(1.5, 1.4, 0.9),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    seat.position.set(cx, 0.9, cz + 1.75);
+    seat.name = "camp-seat";
+    seat.userData.seat = { x: cx, y: 0.05, z: cz + 1.45, yaw: 0, eyeOffset: -0.32 };
+    this.group.add(seat);
+    this.interactables.push({ id: "camp-seat", object: seat, label: "坐下烤火", maxDistance: 2.6 });
+
+    const fireProxy = new THREE.Mesh(
+      new THREE.BoxGeometry(1.7, 1.6, 1.7),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    fireProxy.position.set(cx, 0.9, cz);
+    fireProxy.name = "campfire";
+    this.group.add(fireProxy);
+    this.interactables.push({ id: "campfire", object: fireProxy, label: "点燃篝火", maxDistance: 3.4 });
+
+    // Tent: four stepped layers read as a voxel A-frame from the path.
+    const tx = 39.2;
+    const tz = 17.2;
+    this.addFloor(tx - 1.8, tx + 1.8, tz - 1.8, tz + 1.8, 0.06, 0.12, 0x4c4a3e, {
+      edge: false,
+      tag: "camp",
+    });
+    for (let i = 0; i < 4; i += 1) {
+      this.addBox(tx, 0.3 + i * 0.42, tz, 3.2 - i * 0.72, 0.42, 3.0 - i * 0.5, i % 2 === 0 ? 0x7b5a3c : 0x8d6a46, {
+        tag: "camp",
+      });
+    }
+    this.addBox(tx - 1.45, 0.85, tz, 0.08, 1.0, 1.4, 0x241d16, { solid: false, edge: false });
+    this.addBox(tx, 1.92, tz, 0.9, 0.12, 0.9, C.lime, { glow: true, solid: false, edge: false });
+
+    // 营地牌移到新入口（池塘北岸那条路的东头），牌面朝南，走路过来正好读。
+    for (const offset of [-1.02, 1.02]) {
+      this.addBox(30.9 + offset, 0.7, 15.62, 0.1, 1.4, 0.1, C.woodDark, {
+        solid: false,
+        tag: "camp-sign",
+      });
+    }
+    this.addSign(
+      signTexture("CAMP", "FIRE / TENT / SLOW DOWN", "#ff8a4c"),
+      2.4,
+      0.6,
+      30.9,
+      1.55,
+      15.6,
+      0,
+    );
+  }
+
+  private spawnCampfireEmbers(cx: number, cz: number) {
+    const count = this.quality === "high" ? 34 : 16;
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      positions[i * 3] = cx + (Math.random() - 0.5) * 0.8;
+      positions[i * 3 + 1] = 0.5 + Math.random() * 0.8;
+      positions[i * 3 + 2] = cz + (Math.random() - 0.5) * 0.8;
+      velocities[i * 3] = (Math.random() - 0.5) * 0.25;
+      velocities[i * 3 + 1] = 0.5 + Math.random() * 0.7;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.25;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffb36b,
+      size: 0.07,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = "campfire-embers";
+    points.userData.noShadow = true;
+    this.group.add(points);
+    this.campfireEmbers = { points, velocities, life: 0 };
+  }
+
+  private buildPondDock() {
+    // A short pier over the east edge of the pond.
+    for (let i = 0; i < 6; i += 1) {
+      this.addBox(24.0 + i * 0.72, 0.52, 22.6, 0.66, 0.12, 1.6, i % 2 === 0 ? C.wood : C.woodLight, {
+        tag: "dock",
+      });
+    }
+    for (const x of [24.0, 26.3, 28.4]) {
+      for (const z of [21.9, 23.3]) {
+        this.addBox(x, 0.28, z, 0.18, 1.05, 0.18, C.woodDark, { solid: false, tag: "dock" });
+      }
+    }
+
+    // Rowboat moored just south of the pier.
+    const bx = 24.9;
+    const bz = 25.6;
+    this.addBox(bx, 0.46, bz, 2.2, 0.2, 1.0, C.woodDark, { tag: "boat" });
+    this.addBox(bx, 0.62, bz - 0.5, 2.0, 0.32, 0.12, C.wood, { tag: "boat" });
+    this.addBox(bx, 0.62, bz + 0.5, 2.0, 0.32, 0.12, C.wood, { tag: "boat" });
+    this.addBox(bx - 0.9, 0.62, bz, 0.12, 0.32, 0.9, C.wood, { tag: "boat" });
+    this.addBox(bx + 0.9, 0.62, bz, 0.12, 0.32, 0.9, C.wood, { tag: "boat" });
+    this.addBox(bx, 0.58, bz, 1.4, 0.1, 0.42, C.woodLight, { solid: false, tag: "boat" });
+
+    const boat = new THREE.Mesh(
+      new THREE.BoxGeometry(2.3, 1.0, 1.2),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    boat.position.set(bx, 0.7, bz);
+    boat.name = "boat";
+    boat.userData.seat = { x: bx, y: 0.42, z: bz, yaw: -Math.PI / 2, eyeOffset: -0.28 };
+    this.group.add(boat);
+    this.interactables.push({ id: "boat", object: boat, label: "坐进小船", maxDistance: 3.0 });
+
+    // 池塘指示牌：站在池塘西北角的岸边，牌面朝西南——从支路走过来能读，
+    // 站在水边回头看也能读。以前是一块 27.75 m 处悬空 1.55 m 的贴片，
+    // 没有立柱，远看像浮在水面上。
+    const signX = 17.3;
+    const signZ = 19.2;
+    const signRot = -Math.PI / 5;
+    for (const offset of [-0.86, 0.86]) {
+      this.addBox(
+        signX + Math.cos(signRot) * offset,
+        0.72,
+        signZ - Math.sin(signRot) * offset,
+        0.1,
+        1.5,
+        0.1,
+        C.woodDark,
+        { solid: false, tag: "pond-sign" },
+      );
+    }
+    this.addSign(
+      signTexture("POND", "FEED / SIT / DRIFT", "#9fe6ff"),
+      2.2,
+      0.55,
+      signX,
+      1.62,
+      signZ,
+      signRot,
+    );
+  }
+
+  private buildWindmill() {
+    this.addFloor(35.0, 37.2, -17, -5.0, 0.06, 0.12, C.path, { edge: false, tag: "windmill-path" });
+    this.addFloor(28.6, 36.0, -19.0, -16.6, 0.06, 0.12, C.path, { edge: false, tag: "windmill-path" });
+    this.addFloor(27.0, 42.5, -33.5, -19.0, 0.05, 0.1, 0x5d7d4c, { edge: false, tag: "windmill" });
+
+    const x = 30;
+    const z = -27;
+    this.addBox(x, 1.0, z, 4.2, 2.0, 4.2, C.wallSide, { tag: "windmill" });
+    this.addBox(x, 3.1, z, 3.3, 2.2, 3.3, C.wall, { tag: "windmill" });
+    this.addBox(x, 5.2, z, 2.5, 2.2, 2.5, C.wallSide, { tag: "windmill" });
+    this.addBox(x, 6.45, z, 2.9, 0.28, 2.9, C.roof, { tag: "windmill" });
+    this.addBox(x, 0.85, z + 2.11, 1.0, 1.7, 0.12, C.woodDark, { solid: false, tag: "windmill" });
+
+    const blades = new THREE.Group();
+    blades.name = "windmill-blades";
+    // 叶片盘面必须整体落在塔身正面（z + 2.1）之外：之前放在 z + 1.32，
+    // 四片 4.6 m 长的叶片有一半埋进塔身，从正面看就是「穿模」。
+    blades.position.set(x, 6.05, z + 2.34);
+    const bladeMat = new THREE.MeshLambertMaterial({ color: C.woodLight });
+    // 转子半径 2.8 m，和 6.6 m 高的塔身成比例；原来的 4.6 m 会一直垂到地面。
+    for (let i = 0; i < 4; i += 1) {
+      const a = (i / 4) * Math.PI * 2;
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.14, 2.8, 0.1), bladeMat);
+      arm.position.set(Math.cos(a) * 1.4, Math.sin(a) * 1.4, 0);
+      arm.rotation.z = a - Math.PI / 2;
+      arm.userData.noShadow = true;
+      blades.add(arm);
+      const sail = new THREE.Mesh(new THREE.BoxGeometry(0.52, 1.05, 0.06), new THREE.MeshLambertMaterial({ color: 0xd9cfae }));
+      sail.position.set(Math.cos(a) * 2.05, Math.sin(a) * 2.05, 0);
+      sail.rotation.z = a - Math.PI / 2;
+      sail.userData.noShadow = true;
+      blades.add(sail);
+    }
+    const hub = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.26, 0.4, 8),
+      new THREE.MeshLambertMaterial({ color: C.metal }),
+    );
+    hub.rotation.x = Math.PI / 2;
+    hub.userData.noShadow = true;
+    blades.add(hub);
+    this.group.add(blades);
+    this.windmillBlades = blades;
+
+    // Windsock on the west edge of the garden.
+    const poleX = 25.8;
+    const poleZ = -22.5;
+    this.addBox(poleX, 2.2, poleZ, 0.16, 4.4, 0.16, C.metal, { solid: false });
+    const sock = new THREE.Group();
+    sock.position.set(poleX, 4.25, poleZ);
+    const sockMat = new THREE.MeshLambertMaterial({ color: 0xff8a4c });
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.3, 1.5, 10), sockMat);
+    cone.rotation.z = -Math.PI / 2;
+    cone.position.x = 0.85;
+    cone.userData.noShadow = true;
+    sock.add(cone);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.045, 5, 10), sockMat);
+    ring.rotation.y = Math.PI / 2;
+    ring.position.x = 0.12;
+    ring.userData.noShadow = true;
+    sock.add(ring);
+    this.group.add(sock);
+    this.windsock = sock;
+
+    const proxy = new THREE.Mesh(
+      new THREE.BoxGeometry(4.4, 9.0, 4.4),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    proxy.position.set(x, 4.5, z);
+    proxy.name = "windmill-proxy";
+    this.group.add(proxy);
+    this.interactables.push({ id: "windmill", object: proxy, label: "查看风车", maxDistance: 5.0 });
+    this.plaqueReadings.set("windmill", {
+      index: "10",
+      label: "风车与菜园",
+      title: "天气不只是粒子效果",
+      body: "风车叶片、风向袋、晾衣绳和雨水桶都接在同一套天气系统上：雨天风大、衣服会收起来、桶里的水会涨。切换天气再回来看看。",
+      tags: ["天气", "风向", "雨水"],
+    });
+  }
+
+  private buildGarden() {
+    const beds: Array<[number, number]> = [
+      [36.5, -21.2],
+      [39.8, -21.2],
+      [36.5, -24.8],
+      [39.8, -24.8],
+    ];
+    for (const [x, z] of beds) {
+      this.addBox(x, 0.22, z, 2.7, 0.44, 2.7, C.woodDark, { tag: "garden" });
+      this.addBox(x, 0.46, z, 2.4, 0.08, 2.4, C.soil, { solid: false, edge: false });
+      for (let i = 0; i < 3; i += 1) {
+        for (let j = 0; j < 3; j += 1) {
+          const px = x - 0.72 + i * 0.72;
+          const pz = z - 0.72 + j * 0.72;
+          const h = 0.34 + ((i + j) % 3) * 0.12;
+          this.addBox(px, 0.5 + h / 2, pz, 0.16, h, 0.16, C.leaf, {
+            solid: false,
+            edge: false,
+          });
+          this.addBox(px, 0.5 + h + 0.06, pz, 0.24, 0.12, 0.24, (i + j) % 2 === 0 ? C.flowerB : C.leafLight, {
+            solid: false,
+            edge: false,
+          });
+        }
+      }
+    }
+
+    // Rain barrel: the water plane rises and falls with the weather.
+    const bx = 33.9;
+    const bz = -20.2;
+    this.addBox(bx, 0.6, bz, 1.1, 1.2, 1.1, C.woodDark, { tag: "rain-barrel" });
+    this.addBox(bx, 1.23, bz, 1.2, 0.08, 1.2, C.metal, { solid: false, tag: "rain-barrel" });
+    const water = new THREE.Mesh(
+      new THREE.BoxGeometry(0.86, 0.04, 0.86),
+      this.waterMaterial,
+    );
+    water.position.set(bx, 1.0, bz);
+    water.userData.noShadow = true;
+    this.group.add(water);
+    this.barrelWater = water;
+
+    this.addSign(
+      signTexture("GARDEN", "RAIN / SOIL / GROW", "#6aa558"),
+      2.0,
+      0.5,
+      37.9,
+      1.45,
+      -27.4,
+      0,
+    );
+  }
+
+  private buildLookout() {
+    this.addFloor(-16.2, -14.0, -24.0, -1.4, 0.06, 0.12, C.path, { edge: false, tag: "lookout-path" });
+    this.addFloor(-34.0, -14.0, -23.5, -19.4, 0.06, 0.12, C.path, { edge: false, tag: "lookout-path" });
+
+    const x0 = -39.5;
+    const x1 = -33.5;
+    const z0 = -28.0;
+    const z1 = -22.0;
+    for (const [x, z] of [
+      [x0 + 0.4, z0 + 0.4],
+      [x1 - 0.4, z0 + 0.4],
+      [x0 + 0.4, z1 - 0.4],
+      [x1 - 0.4, z1 - 0.4],
+    ] as const) {
+      this.addBox(x, 0.65, z, 0.24, 1.3, 0.24, C.woodDark, { tag: "lookout" });
+    }
+    this.addFloor(x0, x1, z0, z1, 1.3, 0.24, C.woodLight, { edge: false, tag: "lookout" });
+
+    // Railings, with a gap on the east side for the stairs.
+    for (const z of [z0, z1]) {
+      this.addBox((x0 + x1) / 2, 1.92, z, x1 - x0, 0.14, 0.16, C.wood, { solid: false });
+    }
+    this.addBox(x0, 1.92, (z0 + z1) / 2, 0.16, 0.14, z1 - z0, C.wood, { solid: false });
+    for (let x = x0 + 0.6; x <= x1 - 0.6; x += 1.2) {
+      this.addBox(x, 1.92, z0, 0.12, 1.2, 0.12, C.wood, { solid: false });
+      this.addBox(x, 1.92, z1, 0.12, 1.2, 0.12, C.wood, { solid: false });
+    }
+    for (let z = z0 + 0.6; z <= z1 - 0.6; z += 1.2) {
+      this.addBox(x0, 1.92, z, 0.12, 1.2, 0.12, C.wood, { solid: false });
+    }
+
+    for (let i = 0; i < 3; i += 1) {
+      this.addBox(-33.2 - i * 0.3, 0.22 + i * 0.38, -25.0, 0.9, 0.4 + i * 0.38, 1.6, i % 2 === 0 ? C.stone : C.stoneDark, {
+        tag: "lookout",
+      });
+    }
+
+    this.addBench(-38.6, 1.3, -25.0, -1, "x");
+
+    // Camera tripod for photo mode.
+    const tripod = new THREE.Group();
+    tripod.position.set(-35.0, 1.3, -25.2);
+    tripod.name = "photo-tripod";
+    const legMat = new THREE.MeshStandardMaterial({ color: C.metal, roughness: 0.6 });
+    for (let i = 0; i < 3; i += 1) {
+      const a = (i / 3) * Math.PI * 2;
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.05, 1.35, 6), legMat);
+      leg.position.set(Math.cos(a) * 0.32, 0.65, Math.sin(a) * 0.32);
+      leg.rotation.z = Math.cos(a) * 0.22;
+      leg.rotation.x = -Math.sin(a) * 0.22;
+      tripod.add(leg);
+    }
+    const cameraBody = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 0.34, 0.26),
+      new THREE.MeshStandardMaterial({ color: 0x222a28, roughness: 0.5 }),
+    );
+    cameraBody.position.set(0, 1.42, 0);
+    tripod.add(cameraBody);
+    const lens = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.1, 0.16, 10),
+      new THREE.MeshStandardMaterial({ color: 0x9ec9cf, roughness: 0.2, metalness: 0.4 }),
+    );
+    lens.rotation.z = Math.PI / 2;
+    lens.position.set(0.3, 1.42, 0);
+    tripod.add(lens);
+    tripod.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.userData.noShadow = true;
+      }
+    });
+    this.group.add(tripod);
+    this.interactables.push({
+      id: "photo",
+      object: tripod,
+      label: "进入拍照模式",
+      maxDistance: 3.2,
+    });
+
+    this.addSign(
+      signTexture("LOOKOUT", "PHOTO POINT / PRESS E", "#e5c07b"),
+      2.2,
+      0.55,
+      -36.5,
+      2.2,
+      z1 + 0.08,
+      0,
+    );
+  }
+
+  private buildWeatherProps() {
+    // Laundry line in front of the studio: the clothes disappear when it rains.
+    for (const x of [4.6, 9.6]) {
+      this.addBox(x, 1.35, -14.9, 0.14, 2.7, 0.14, C.metal, { solid: false });
+    }
+    this.addBox(7.1, 2.66, -14.9, 5.2, 0.06, 0.06, 0xcfc7b4, { solid: false, edge: false });
+    const clothColors = [0xd66b7a, 0xf3e6a5, 0x9fe6ff, 0xd8ff5f];
+    clothColors.forEach((color, i) => {
+      const cloth = new THREE.Mesh(
+        new THREE.BoxGeometry(0.82, 0.95, 0.05),
+        new THREE.MeshLambertMaterial({ color }),
+      );
+      cloth.position.set(5.55 + i * 1.05, 2.15, -14.9);
+      cloth.userData.noShadow = true;
+      this.group.add(cloth);
+      this.laundryClothes.push(cloth);
+    });
+
+    // Wind chime under the pavilion roof.
+    for (let i = 0; i < 5; i += 1) {
+      const tube = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.035, 0.035, 0.3 + (i % 3) * 0.14, 6),
+        new THREE.MeshLambertMaterial({ color: i % 2 === 0 ? C.metalLight : 0xd9cfae }),
+      );
+      tube.position.set(-37.75 + (i - 2) * 0.16, 3.12, 30.4);
+      tube.userData.noShadow = true;
+      this.group.add(tube);
+      this.chimeTubes.push(tube);
+    }
+    for (const x of [-38.05, -37.45]) {
+      this.addBox(x, 3.55, 30.4, 0.03, 0.5, 0.03, 0x9aa39a, { solid: false, edge: false });
+    }
+  }
+
+  private buildMapBoard() {
+    const x = -6.9;
+    const z = 21.6;
+    this.addBox(x - 1.42, 1.0, z, 0.16, 2.2, 0.16, C.metal, { solid: false });
+    this.addBox(x + 1.42, 1.0, z, 0.16, 2.2, 0.16, C.metal, { solid: false });
+    this.addBox(x, 2.3, z - 0.06, 3.0, 2.5, 0.18, C.woodDark);
+    const board = this.addSign(islandMapTexture(), 2.7, 2.3, x, 2.48, z + 0.06);
+    board.name = "island-map";
+    this.addBox(x, 3.66, z + 0.04, 3.0, 0.1, 0.12, C.lime, {
+      glow: true,
+      solid: false,
+      edge: false,
+    });
+    this.interactables.push({
+      id: "map",
+      object: board,
+      label: "查看岛屿地图",
+      maxDistance: 3.6,
+    });
+  }
+
+  private buildPiano() {
+    // A street piano on the west side of the plaza, facing the fountain.
+    const x = -8.6;
+    const z = 5.0;
+    // 琴身：正面（+x）朝喷泉，琴凳在 +x 侧，坐下来正好面对键盘。
+    this.addBox(x, 0.72, z, 0.72, 1.2, 1.5, C.woodDark, { tag: "piano" });
+    this.addBox(x, 1.34, z, 0.78, 0.1, 1.58, C.black, { tag: "piano" });
+    // 键盘台从琴身伸出来，琴键才不会嵌在琴体里。
+    this.addBox(x + 0.62, 1.16, z, 0.5, 0.12, 1.5, C.woodDark, { tag: "piano" });
+
+    // 8 个白键，1—8 各对应音阶里的一个音；每个键单独一个 mesh 才能按下沉。
+    const keyDepth = 0.42;
+    const keyPitch = 0.16;
+    const keyWidth = 0.15;
+    const keyRestY = 1.235;
+    const keyX = x + 0.62;
+    for (let i = 0; i < 8; i += 1) {
+      const key = new THREE.Mesh(
+        new THREE.BoxGeometry(keyDepth, 0.075, keyWidth),
+        new THREE.MeshLambertMaterial({ color: 0xf3eee2 }),
+      );
+      key.position.set(keyX, keyRestY, z - (7 * keyPitch) / 2 + i * keyPitch);
+      key.userData.restY = keyRestY;
+      key.userData.noShadow = true;
+      this.group.add(key);
+      this.pianoKeys.push(key);
+    }
+    // 黑键只贴住键尾：视觉上是一条琴键，不参与按压动画。
+    for (let i = 0; i < 7; i += 1) {
+      const black = new THREE.Mesh(
+        new THREE.BoxGeometry(0.24, 0.06, 0.085),
+        new THREE.MeshLambertMaterial({ color: 0x1d211f }),
+      );
+      black.position.set(keyX - 0.12, keyRestY + 0.0675, z - (6 * keyPitch) / 2 + i * keyPitch);
+      black.userData.noShadow = true;
+      this.group.add(black);
+    }
+
+    // 谱架：别让 PIANO 牌悬在半空。
+    this.addBox(x - 0.36, 1.66, z, 0.06, 0.55, 1.5, C.black, { solid: false, edge: false });
+    this.addSign(
+      signTexture("PIANO", "PRESS E / THEN 1—8", "#d8ff5f"),
+      1.7,
+      0.42,
+      x - 0.3,
+      1.7,
+      z,
+      Math.PI / 2,
+    );
+
+    // 琴凳：座面 + 靠背，靠背在 +x 侧，坐上去背对广场。
+    this.addBox(x + 1.2, 0.3, z, 0.62, 0.6, 0.62, C.wood, { tag: "piano" });
+    this.addBox(x + 1.45, 0.7, z, 0.18, 1.2, 0.7, C.woodDark, { tag: "piano" });
+    this.addBox(x, 0.2, z, 0.8, 0.4, 1.6, C.woodDark, { solid: false, edge: false });
+
+    const proxy = new THREE.Mesh(
+      new THREE.BoxGeometry(1.4, 1.6, 1.9),
+      new THREE.MeshBasicMaterial({ visible: false }),
+    );
+    proxy.position.set(x - 0.2, 1.0, z);
+    proxy.name = "piano";
+    this.group.add(proxy);
+    this.interactables.push({ id: "piano", object: proxy, label: "弹一首", maxDistance: 3.2 });
+  }
+
+  /** 按下一个白键：只做 0.16 秒的下沉，不影响其他键。 */
+  pressPianoKey(index: number) {
+    if (index < 0 || index >= this.pianoKeys.length) return;
+    this.pianoKeyPress[index] = 0.16;
+  }
+
+  private createCat() {
+    const cat = new THREE.Group();
+    cat.name = "cat";
+    const orange = new THREE.MeshStandardMaterial({ color: 0xe0a15c, roughness: 0.85 });
+    const cream = new THREE.MeshStandardMaterial({ color: 0xf4e6c8, roughness: 0.9 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x3a2a1e, roughness: 0.8 });
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.32, 0.36), orange);
+    body.position.y = 0.25;
+    cat.add(body);
+    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.3), cream);
+    chest.position.set(0.3, 0.26, 0);
+    cat.add(chest);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.3, 0.32), orange);
+    head.position.set(0.46, 0.48, 0);
+    cat.add(head);
+    const muzzle = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.2), cream);
+    muzzle.position.set(0.62, 0.43, 0);
+    cat.add(muzzle);
+    for (const z of [-0.09, 0.09]) {
+      const ear = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.06), orange);
+      ear.position.set(0.43, 0.68, z);
+      cat.add(ear);
+      const eye = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.05, 0.04), dark);
+      eye.position.set(0.62, 0.52, z * 0.9);
+      cat.add(eye);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.22, 0.1), i % 2 === 0 ? orange : cream);
+      leg.position.set(-0.22 + (i % 2) * 0.42, 0.1, i < 2 ? -0.12 : 0.12);
+      cat.add(leg);
+    }
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.08, 0.08), orange);
+    tail.position.set(-0.58, 0.46, 0);
+    tail.name = "cat-tail";
+    cat.add(tail);
+
+    cat.position.set(7.2, 0.02, 6.2);
+    cat.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) {
+        obj.castShadow = true;
+        obj.userData.noShadow = true;
+      }
+    });
+    this.group.add(cat);
+    this.cat = cat;
+    this.interactables.push({ id: "cat", object: cat, label: "摸摸猫", maxDistance: 3.0 });
+  }
+
+  private createFireflies() {
+    const count = this.quality === "high" ? 46 : 22;
+    const positions = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      const inPond = i % 3 !== 0;
+      const x = inPond ? 17 + Math.random() * 12 : -41 + Math.random() * 27;
+      const z = inPond ? 20 + Math.random() * 9 : 16 + Math.random() * 18;
+      const y = 0.6 + Math.random() * 1.8;
+      this.fireflyBase.push(new THREE.Vector3(x, y, z));
+      this.fireflyPhase.push(Math.random() * Math.PI * 2);
+      positions[i * 3] = x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = z;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xffe38a,
+      size: 0.1,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.name = "fireflies";
+    points.userData.noShadow = true;
+    this.group.add(points);
+    this.fireflies = points;
+  }
+
+  private createPigeons() {
+    const spots: Array<[number, number]> = [
+      [4.6, 2.2],
+      [6.1, 1.4],
+      [7.3, 2.9],
+      [8.4, 1.8],
+      [5.4, 0.2],
+    ];
+    spots.forEach(([x, z], i) => {
+      const group = new THREE.Group();
+      group.name = "pigeon";
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.26, 0.2, 0.18),
+        new THREE.MeshStandardMaterial({ color: 0x8d99a3, roughness: 0.9 }),
+      );
+      group.add(body);
+      const head = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.13, 0.12),
+        new THREE.MeshStandardMaterial({ color: 0x5d6b76, roughness: 0.9 }),
+      );
+      head.position.set(0.16, 0.1, 0);
+      group.add(head);
+      const beak = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.04, 0.04), new THREE.MeshBasicMaterial({ color: 0xd8a15a }));
+      beak.position.set(0.24, 0.07, 0);
+      group.add(beak);
+      const tail = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.06, 0.12),
+        new THREE.MeshStandardMaterial({ color: 0x6d7a85, roughness: 0.9 }),
+      );
+      tail.position.set(-0.19, 0.02, 0);
+      group.add(tail);
+      group.position.set(x, 0.16, z);
+      group.rotation.y = Math.random() * Math.PI * 2;
+      group.userData.noShadow = true;
+      this.group.add(group);
+      this.pigeons.push({ group, home: new THREE.Vector3(x, 0.16, z), timer: 0, phase: i * 1.3 });
+    });
+  }
+
+  /**
+   * 广场地图牌、地图面板、印章共用的分区判定入口。
+   * 世界不自己存玩家位置，engine 每帧喂进来，避免两个模块各算一遍。
+   */
+  setPlayerPosition(x: number, z: number) {
+    this.playerPos.set(x, z);
+  }
+
+  setWeather(type: WeatherType) {
+    this.weatherType = type;
+  }
+
+  petCat(): boolean {
+    if (!this.cat) return false;
+    this.catPetTimer = 1.4;
+    this.catState = "sit";
+    this.spawnCatHearts();
+    return true;
+  }
+
+  toggleCampfire(): boolean {
+    this.campfireOn = !this.campfireOn;
+    this.campfireFlames.forEach((flame) => {
+      flame.visible = this.campfireOn;
+    });
+    if (this.campfireEmbers) {
+      (this.campfireEmbers.points.material as THREE.PointsMaterial).opacity = this.campfireOn ? 0.9 : 0;
+    }
+    if (this.campfireLight) this.campfireLight.intensity = this.campfireOn ? 2.6 : 0;
+    const item = this.interactables.find((i) => i.id === "campfire");
+    if (item) item.label = this.campfireOn ? "熄灭篝火" : "点燃篝火";
+    return this.campfireOn;
+  }
+
+  private spawnCatHearts() {
+    if (!this.cat) return;
+    if (this.catHearts) {
+      this.group.remove(this.catHearts.points);
+      this.catHearts.points.geometry.dispose();
+      (this.catHearts.points.material as THREE.Material).dispose();
+    }
+    const count = 18;
+    const positions = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
+    for (let i = 0; i < count; i += 1) {
+      positions[i * 3] = this.cat.position.x + (Math.random() - 0.5) * 0.5;
+      positions[i * 3 + 1] = this.cat.position.y + 0.5 + Math.random() * 0.3;
+      positions[i * 3 + 2] = this.cat.position.z + (Math.random() - 0.5) * 0.5;
+      velocities[i * 3] = (Math.random() - 0.5) * 0.4;
+      velocities[i * 3 + 1] = 0.4 + Math.random() * 0.4;
+      velocities[i * 3 + 2] = (Math.random() - 0.5) * 0.4;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const mat = new THREE.PointsMaterial({
+      color: 0xff8aa8,
+      size: 0.14,
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      toneMapped: false,
+    });
+    const points = new THREE.Points(geo, mat);
+    points.userData.noShadow = true;
+    this.group.add(points);
+    this.catHearts = { points, velocities, life: 1.8 };
+  }
+
   private createFountain() {
     const water = new THREE.Mesh(new THREE.BoxGeometry(6.0, 0.14, 6.0), this.waterMaterial);
     water.position.set(0, 0.68, 0);
@@ -2150,10 +3286,12 @@ export class VoxelWorld {
       [-7.2, 19],
       [13.5, -7.2],
       [-13.5, -7.2],
-      [17.5, 12.5],
-      [30, 12.5],
+      // 池塘北岸那条路的两盏灯，别再站在旧营地的直路上。
+      [18.4, 15.4],
+      [28.4, 15.4],
       [-17.5, 12.5],
-      [-30, 12.5],
+      // 五年小径转角：往西让出 1.2 m，不再挡在路中间。
+      [-32.5, 12.4],
     ];
 
     for (const [x, z] of positions) {
@@ -2621,8 +3759,13 @@ export class VoxelWorld {
 
   setNight(night: number) {
     const n = THREE.MathUtils.clamp(night, 0, 1);
+    this.night = n;
     if (this.glowMaterial) this.glowMaterial.opacity = 0.28 + n * 0.72;
     if (this.poolMaterial) this.poolMaterial.opacity = n * 0.3;
+    if (this.fireflies) {
+      const mat = this.fireflies.material as THREE.PointsMaterial;
+      mat.opacity = n * (this.quality === "high" ? 0.9 : 0.55);
+    }
     this.poolLights.forEach((light, i) => {
       light.intensity = n * this.poolLightBase[i];
     });
@@ -2650,6 +3793,15 @@ export class VoxelWorld {
         this.shelfCollider.minX = next - 1.7;
         this.shelfCollider.maxX = next + 1.7;
       }
+    }
+
+    if (this.pianoKeys.length > 0) {
+      this.pianoKeys.forEach((key, i) => {
+        const press = Math.max(0, (this.pianoKeyPress[i] ?? 0) - dt);
+        this.pianoKeyPress[i] = press;
+        const targetY = (key.userData.restY as number) - (press > 0 ? 0.035 : 0);
+        key.position.y = THREE.MathUtils.damp(key.position.y, targetY, 30, dt);
+      });
     }
 
     if (this.radioLight) {
@@ -2727,6 +3879,168 @@ export class VoxelWorld {
 
     if (this.courtLit) {
       this.courtLight.intensity = THREE.MathUtils.lerp(this.courtLight.intensity, 240, 0.06);
+    }
+
+    this.updateAmbientLife(dt, elapsed);
+  }
+
+  /** 风车、晾衣绳、雨水桶、篝火、猫、萤火虫和鸽子：都是轻量动画，集中在这里推进。 */
+  private updateAmbientLife(dt: number, elapsed: number) {
+    const wind =
+      this.weatherType === "rain"
+        ? 2.2
+        : this.weatherType === "snow"
+          ? 1.1
+          : this.weatherType === "fog"
+            ? 0.45
+            : 0.8;
+
+    if (this.windmillBlades) {
+      this.windmillBlades.rotation.z += dt * wind;
+    }
+    if (this.windsock) {
+      this.windsock.rotation.z = Math.sin(elapsed * 1.7) * 0.1 * wind;
+      this.windsock.rotation.y = Math.sin(elapsed * 0.8) * 0.22;
+    }
+    this.chimeTubes.forEach((tube, i) => {
+      tube.rotation.z = Math.sin(elapsed * (1.1 + i * 0.17) + i) * 0.09;
+      tube.rotation.x = Math.cos(elapsed * (0.9 + i * 0.13) + i) * 0.06;
+    });
+
+    // 下雨收衣服：这是场景里最容易被看见的天气反馈。
+    const raining = this.rainAmount > 0.25;
+    this.laundryClothes.forEach((cloth, i) => {
+      cloth.visible = !raining;
+      if (!cloth.visible) return;
+      cloth.rotation.x = Math.sin(elapsed * 1.5 + i * 0.8) * 0.06;
+      cloth.position.z = -14.9 + Math.sin(elapsed * 1.2 + i) * 0.04;
+    });
+
+    this.barrelFill = THREE.MathUtils.clamp(
+      this.barrelFill + (raining ? 0.055 : -0.018) * dt,
+      0.05,
+      1,
+    );
+    if (this.barrelWater) this.barrelWater.position.y = 0.7 + this.barrelFill * 0.45;
+
+    if (this.campfireOn) {
+      this.campfireFlames.forEach((flame, i) => {
+        flame.scale.setScalar(0.9 + Math.sin(elapsed * 7.2 + i * 2.1) * 0.12);
+      });
+      if (this.campfireLight) {
+        this.campfireLight.intensity =
+          2.4 + Math.sin(elapsed * 11) * 0.5 + Math.sin(elapsed * 17.3) * 0.25;
+      }
+      if (this.campfireEmbers) {
+        const pos = this.campfireEmbers.points.geometry.getAttribute("position") as THREE.BufferAttribute;
+        const arr = pos.array as Float32Array;
+        const vel = this.campfireEmbers.velocities;
+        for (let i = 0; i < pos.count; i += 1) {
+          arr[i * 3] += vel[i * 3] * dt;
+          arr[i * 3 + 1] += vel[i * 3 + 1] * dt;
+          arr[i * 3 + 2] += vel[i * 3 + 2] * dt;
+          if (arr[i * 3 + 1] > 3.2) {
+            arr[i * 3] = 35.2 + (Math.random() - 0.5) * 0.7;
+            arr[i * 3 + 1] = 0.5;
+            arr[i * 3 + 2] = 17.2 + (Math.random() - 0.5) * 0.7;
+          }
+        }
+        pos.needsUpdate = true;
+      }
+    }
+
+    if (this.fireflies) {
+      const night = this.night;
+      (this.fireflies.material as THREE.PointsMaterial).opacity =
+        night * (this.quality === "high" ? 0.9 : 0.55);
+      if (night > 0.04) {
+        const pos = this.fireflies.geometry.getAttribute("position") as THREE.BufferAttribute;
+        const arr = pos.array as Float32Array;
+        for (let i = 0; i < this.fireflyBase.length; i += 1) {
+          const base = this.fireflyBase[i]!;
+          const phase = this.fireflyPhase[i]!;
+          arr[i * 3] = base.x + Math.sin(elapsed * 0.5 + phase) * 0.7;
+          arr[i * 3 + 1] = base.y + Math.sin(elapsed * 0.8 + phase * 1.7) * 0.4;
+          arr[i * 3 + 2] = base.z + Math.cos(elapsed * 0.4 + phase) * 0.7;
+        }
+        pos.needsUpdate = true;
+      }
+    }
+
+    if (this.cat) {
+      this.catPetTimer = Math.max(0, this.catPetTimer - dt);
+      const cat = this.cat;
+      const dxPlayer = this.playerPos.x - cat.position.x;
+      const dzPlayer = this.playerPos.y - cat.position.z;
+      const distance = Math.hypot(dxPlayer, dzPlayer);
+      if (distance < 10 && distance > 2.6) {
+        const scale = 2.4 / Math.max(distance, 0.001);
+        this.catTarget.set(this.playerPos.x - dxPlayer * scale, 0.02, this.playerPos.y - dzPlayer * scale);
+        this.catState = "walk";
+      } else if (distance >= 10.5) {
+        this.catTarget.set(7.2, 0.02, 6.2);
+        this.catState = "walk";
+      } else {
+        this.catState = this.catPetTimer > 0 ? "sit" : "idle";
+      }
+
+      const mx = this.catTarget.x - cat.position.x;
+      const mz = this.catTarget.z - cat.position.z;
+      const move = Math.hypot(mx, mz);
+      if (move > 0.35) {
+        const speed = 2.0;
+        const step = Math.min(move, speed * dt);
+        cat.position.x += (mx / move) * step;
+        cat.position.z += (mz / move) * step;
+        const yaw = Math.atan2(-mz, mx);
+        let delta = yaw - cat.rotation.y;
+        while (delta > Math.PI) delta -= Math.PI * 2;
+        while (delta < -Math.PI) delta += Math.PI * 2;
+        cat.rotation.y += delta * Math.min(1, dt * 8);
+        cat.position.y = 0.02 + Math.abs(Math.sin(elapsed * 9)) * 0.03;
+      } else {
+        cat.position.y = 0.02;
+      }
+      const tail = cat.getObjectByName("cat-tail");
+      if (tail) tail.rotation.y = Math.sin(elapsed * (this.catState === "sit" ? 1.6 : 3.2)) * 0.4;
+    }
+
+    if (this.catHearts) {
+      const hearts = this.catHearts;
+      hearts.life -= dt;
+      const pos = hearts.points.geometry.getAttribute("position") as THREE.BufferAttribute;
+      const arr = pos.array as Float32Array;
+      for (let i = 0; i < pos.count; i += 1) {
+        arr[i * 3] += hearts.velocities[i * 3] * dt;
+        arr[i * 3 + 1] += hearts.velocities[i * 3 + 1] * dt;
+        arr[i * 3 + 2] += hearts.velocities[i * 3 + 2] * dt;
+      }
+      pos.needsUpdate = true;
+      (hearts.points.material as THREE.PointsMaterial).opacity = Math.max(0, hearts.life / 1.8);
+      if (hearts.life <= 0) {
+        this.group.remove(hearts.points);
+        hearts.points.geometry.dispose();
+        (hearts.points.material as THREE.Material).dispose();
+        this.catHearts = undefined;
+      }
+    }
+
+    for (const pigeon of this.pigeons) {
+      const distance = Math.hypot(this.playerPos.x - pigeon.home.x, this.playerPos.y - pigeon.home.z);
+      if (distance < 3.6 && pigeon.timer <= 0) pigeon.timer = 2.8;
+      if (pigeon.timer > 0) {
+        pigeon.timer = Math.max(0, pigeon.timer - dt);
+        const progress = 1 - pigeon.timer / 2.8;
+        const lift = Math.sin(progress * Math.PI) * 2.4;
+        pigeon.group.position.set(
+          pigeon.home.x + Math.sin(elapsed * 3 + pigeon.phase) * 0.7,
+          pigeon.home.y + lift,
+          pigeon.home.z + Math.cos(elapsed * 2.6 + pigeon.phase) * 0.7,
+        );
+        pigeon.group.rotation.y += dt * 2.5;
+      } else {
+        pigeon.group.position.lerp(pigeon.home, Math.min(1, dt * 2.4));
+      }
     }
   }
 

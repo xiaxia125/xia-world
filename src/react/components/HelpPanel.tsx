@@ -23,6 +23,7 @@ const GROUPS: Array<{ id: string; kicker: string; title: string; rows: KeyRow[] 
     rows: [
       { keys: ["E"], label: "和眼前的东西互动" },
       { keys: ["P"], label: "打开职业档案" },
+      { keys: ["N"], label: "查看岛屿地图" },
       { keys: ["R"], label: "切换天气" },
       { keys: ["M"], label: "开关背景音乐" },
       { keys: ["H"], label: "打开这份说明" },
@@ -50,6 +51,7 @@ const TOUCH_GROUPS: typeof GROUPS = [
     rows: [
       { keys: ["E"], label: "和眼前的东西互动" },
       { keys: ["CV"], label: "打开职业档案" },
+      { keys: ["▦"], label: "查看岛屿地图" },
     ],
   },
 ];
@@ -113,11 +115,17 @@ export function HelpPanel({ snapshot }: { snapshot: UISnapshot }) {
           <p className="help-group-kicker">03 / HIDDEN</p>
           <h3 id="help-eggs">还有</h3>
           <p className="help-note">
-            这座岛上藏着 7 处可以收集的彩蛋，散在球场、天台、书房和池塘之间。
+            这座岛上藏着 5 处可以收集的彩蛋，散在球场、天台、书房和池塘之间。
             走近有反应的东西，按 <kbd>E</kbd> 试试。
           </p>
+          <p className="help-note">
+            地图上有 11 个分区。第一次走进一个区域会自动盖一枚访客印章，
+            集齐后可以在广场的地图牌前对一遍。
+          </p>
           <p className="help-note help-note-quiet">
-            当前进度 <span className="help-count">{snapshot.eggCount}/{snapshot.eggTotal}</span>
+            彩蛋进度 <span className="help-count">{snapshot.eggCount}/{snapshot.eggTotal}</span>
+            <span className="help-count-sep">·</span>
+            印章 <span className="help-count">{snapshot.stamps.length}/11</span>
           </p>
         </section>
       </div>

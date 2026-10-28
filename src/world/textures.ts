@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { ZONES } from "./zones";
 
 type Ctx = CanvasRenderingContext2D;
 
@@ -369,7 +370,7 @@ export function radioTunerTexture(): THREE.CanvasTexture {
   return finish(c, 4);
 }
 
-export function screenTexture(score: number, eggs: number, totalEggs = 7): THREE.CanvasTexture {
+export function screenTexture(score: number, eggs: number, totalEggs = 5): THREE.CanvasTexture {
   const { c, ctx } = canvas(1024, 576);
   ctx.fillStyle = "#07110c";
   ctx.fillRect(0, 0, 1024, 576);
@@ -416,7 +417,7 @@ export function screenTexture(score: number, eggs: number, totalEggs = 7): THREE
 
   ctx.fillStyle = "rgba(216,255,95,0.5)";
   ctx.font = "400 14px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("LIVE RENDER — 60FPS TARGET", 700, 72);
+  ctx.fillText("LIVE RENDER · 60FPS TARGET", 700, 72);
   return finish(c, 8);
 }
 
@@ -486,6 +487,150 @@ export function posterTexture(
   ctx.strokeStyle = "rgba(255,255,255,0.18)";
   ctx.lineWidth = 2;
   ctx.strokeRect(16, 16, 736, 992);
+  return finish(c, 8);
+}
+
+/**
+ * 工作室里的立式白板。原来是三张各讲一个方向的海报，读起来像简历分栏；
+ * 现在合成一块白板，把界面 / 数据 / 交互写成同一条工作链。
+ */
+export function whiteboardTexture(): THREE.CanvasTexture {
+  const width = 1024;
+  const height = 640;
+  const { c, ctx } = canvas(width, height);
+
+  ctx.fillStyle = "#eceade";
+  ctx.fillRect(0, 0, width, height);
+  // 白板长期使用的擦痕：很淡的中性色块，不是贴图噪点。
+  ctx.fillStyle = "rgba(120,126,116,0.06)";
+  for (let i = 0; i < 9; i += 1) {
+    ctx.fillRect((i * 137) % width, (i * 83) % height, 180, 46);
+  }
+
+  ctx.fillStyle = "#2f5547";
+  ctx.font = "700 46px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+  ctx.fillText("怎么把复杂信息做清楚", 56, 86);
+  ctx.fillStyle = "#d8ff5f";
+  ctx.fillRect(56, 104, 468, 10);
+
+  ctx.fillStyle = "rgba(47,85,71,0.55)";
+  ctx.font = "500 18px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("STUDIO BOARD / WORKING NOTES / 2026", 58, 138);
+
+  const columns: Array<{ no: string; title: string; lines: string[]; accent: string }> = [
+    {
+      no: "01",
+      title: "界面",
+      lines: ["Vue 2/3 · React · TS", "先理清路径，再谈动效", "组件拆到能复用为止"],
+      accent: "#2f5547",
+    },
+    {
+      no: "02",
+      title: "数据",
+      lines: ["ECharts · 地图 · 三维", "同一组数字，换个尺度", "先让人看懂，再让人惊叹"],
+      accent: "#b26a2f",
+    },
+    {
+      no: "03",
+      title: "交互",
+      lines: ["Three.js · UniApp · H5", "桌面到手机是同一条线", "把入口做明显，把退路留好"],
+      accent: "#3f6070",
+    },
+  ];
+
+  columns.forEach((column, index) => {
+    const x = 58 + index * 316;
+    ctx.fillStyle = column.accent;
+    ctx.font = "800 34px 'Cascadia Code', Consolas, monospace";
+    ctx.fillText(column.no, x, 218);
+    ctx.font = "700 34px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillText(column.title, x + 58, 218);
+    ctx.fillRect(x, 236, 268, 4);
+    ctx.font = "500 22px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    column.lines.forEach((line, i) => {
+      ctx.fillStyle = "rgba(38,48,43,0.82)";
+      ctx.fillText(line, x, 286 + i * 42);
+    });
+  });
+
+  // 便签：三张不同颜色，写的是还没做完的事。
+  const notes: Array<{ x: number; color: string; text: string }> = [
+    { x: 84, color: "#d8ff5f", text: "把地图性能再测一遍" },
+    { x: 396, color: "#ffcf8a", text: "接口错误态补文案" },
+    { x: 700, color: "#f1b6b0", text: "手机端再走一次流程" },
+  ];
+  notes.forEach((note, i) => {
+    ctx.save();
+    ctx.translate(note.x, 470 + (i % 2) * 18);
+    ctx.rotate((i - 1) * 0.035);
+    ctx.fillStyle = note.color;
+    ctx.fillRect(0, 0, 236, 110);
+    ctx.fillStyle = "rgba(30,40,34,0.78)";
+    ctx.font = "600 20px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    ctx.fillText(note.text, 20, 46);
+    ctx.fillStyle = "rgba(30,40,34,0.4)";
+    ctx.font = "500 15px 'Cascadia Code', Consolas, monospace";
+    ctx.fillText("TODO / NEXT", 20, 84);
+    ctx.restore();
+  });
+
+  // 右下角的小流程图：界面 → 数据 → 交互，最后回到用户。
+  ctx.strokeStyle = "rgba(47,85,71,0.5)";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(690, 564);
+  ctx.lineTo(930, 564);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(47,85,71,0.85)";
+  ctx.font = "600 18px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("界面 → 数据 → 交互 → 用户", 690, 602);
+
+  ctx.strokeStyle = "rgba(47,85,71,0.35)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(20, 20, width - 40, height - 40);
+  return finish(c, 8);
+}
+
+/** 副屏：竖着一块编辑器，和主屏的公开档案分开。 */
+export function codeTexture(): THREE.CanvasTexture {
+  const width = 384;
+  const height = 512;
+  const { c, ctx } = canvas(width, height);
+  ctx.fillStyle = "#0b1310";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#152019";
+  ctx.fillRect(0, 0, width, 34);
+  ctx.fillStyle = "#d8ff5f";
+  ctx.font = "600 14px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("App.tsx", 16, 23);
+  ctx.fillStyle = "rgba(241,236,223,0.35)";
+  ctx.fillText("map.ts", 104, 23);
+  ctx.fillText("api.ts", 168, 23);
+
+  const colors = ["#7fb5a2", "#d8ff5f", "#8fb0d8", "#e5c07b", "rgba(241,236,223,0.42)"];
+  let y = 66;
+  for (let i = 0; i < 17; i += 1) {
+    ctx.fillStyle = "rgba(241,236,223,0.18)";
+    ctx.font = "400 12px 'Cascadia Code', Consolas, monospace";
+    ctx.fillText(String(i + 1).padStart(2, "0"), 12, y);
+    ctx.fillStyle = colors[(i * 3 + 1) % colors.length];
+    const indent = 34 + ((i * 5) % 3) * 12;
+    const w = 60 + ((i * 47) % 220);
+    ctx.fillRect(indent, y - 9, w, 8);
+    y += 23;
+  }
+
+  ctx.fillStyle = "#0f1b15";
+  ctx.fillRect(0, 408, width, 104);
+  ctx.fillStyle = "#d8ff5f";
+  ctx.font = "600 13px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("$ npm run build", 16, 434);
+  ctx.fillStyle = "rgba(241,236,223,0.55)";
+  ctx.font = "400 12px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("vite v7  ready in 412 ms", 16, 458);
+  ctx.fillStyle = "#9fe6ff";
+  ctx.fillText("dist/ 611.2 kB  ✓", 16, 480);
   return finish(c, 8);
 }
 
@@ -576,106 +721,6 @@ export function floorSignTexture(): THREE.CanvasTexture {
   return finish(c, 4);
 }
 
-export function arcadeTexture(): THREE.CanvasTexture {
-  const { c, ctx } = canvas(512, 512);
-  ctx.fillStyle = "#07100c";
-  ctx.fillRect(0, 0, 512, 512);
-
-  const glow = ctx.createRadialGradient(256, 300, 20, 256, 300, 320);
-  glow.addColorStop(0, "rgba(216,255,95,0.18)");
-  glow.addColorStop(1, "rgba(216,255,95,0)");
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, 512, 512);
-
-  // A tiny pixel runner.
-  ctx.fillStyle = "#d8ff5f";
-  ctx.fillRect(56, 260, 22, 54);
-  ctx.fillRect(50, 270, 10, 28);
-  ctx.fillRect(74, 270, 10, 28);
-  ctx.fillRect(58, 314, 8, 34);
-  ctx.fillRect(68, 314, 8, 34);
-  ctx.fillStyle = "#ff8a4c";
-  for (let i = 0; i < 5; i += 1) {
-    ctx.fillRect(330 + i * 24, 336 - (i % 2) * 12, 20, 20);
-  }
-  ctx.strokeStyle = "rgba(216,255,95,0.3)";
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.moveTo(24, 350);
-  ctx.lineTo(488, 350);
-  ctx.stroke();
-
-  ctx.fillStyle = "#f1ecdf";
-  ctx.font = "900 54px 'Arial Black', 'PingFang SC', sans-serif";
-  ctx.fillText("XIA", 34, 88);
-  ctx.fillStyle = "#d8ff5f";
-  ctx.fillText("RUNNER", 34, 140);
-
-  ctx.fillStyle = "rgba(241,236,223,0.55)";
-  ctx.font = "500 15px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("INSERT COIN / PRESS E", 36, 190);
-  ctx.fillStyle = "#ff8a4c";
-  ctx.font = "700 18px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("HIGH SCORE 000000", 36, 412);
-  return finish(c, 8);
-}
-
-export function cinemaTexture(): THREE.CanvasTexture {
-  const { c, ctx } = canvas(1024, 512);
-  const sky = ctx.createLinearGradient(0, 0, 0, 512);
-  sky.addColorStop(0, "#0a1320");
-  sky.addColorStop(0.55, "#33405c");
-  sky.addColorStop(0.74, "#d2765d");
-  sky.addColorStop(1, "#f3c17a");
-  ctx.fillStyle = sky;
-  ctx.fillRect(0, 0, 1024, 512);
-
-  // A low voxel sun.
-  ctx.fillStyle = "#ffe1a3";
-  ctx.fillRect(694, 268, 96, 96);
-  ctx.fillStyle = "rgba(255,225,163,0.18)";
-  ctx.fillRect(670, 244, 144, 144);
-
-  // Skyline.
-  ctx.fillStyle = "#0a1410";
-  const blocks = [
-    [0, 330, 150, 182],
-    [170, 386, 120, 126],
-    [310, 300, 92, 212],
-    [420, 356, 168, 156],
-    [606, 322, 84, 190],
-    [706, 386, 146, 126],
-    [870, 342, 154, 170],
-  ];
-  for (const [x, y, w, h] of blocks) ctx.fillRect(x, y, w, h);
-
-  ctx.fillStyle = "rgba(216,255,95,0.9)";
-  for (let i = 0; i < 26; i += 1) {
-    const x = 18 + ((i * 97) % 980);
-    const y = 350 + ((i * 53) % 130);
-    ctx.fillRect(x, y, 4, 8);
-  }
-
-  ctx.fillStyle = "rgba(241,236,223,0.6)";
-  ctx.font = "600 14px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("XIA HOME PICTURES PRESENTS", 42, 54);
-  ctx.fillStyle = "#f1ecdf";
-  ctx.font = "900 96px 'Arial Black', 'PingFang SC', sans-serif";
-  ctx.fillText("SMALL", 38, 154);
-  ctx.fillStyle = "#d8ff5f";
-  ctx.fillText("WORLD", 38, 246);
-  ctx.fillStyle = "rgba(241,236,223,0.55)";
-  ctx.font = "400 17px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("A SHORT FILM / PRESS E TO WATCH", 42, 466);
-
-  // Film frame marks.
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  for (let x = 0; x < 1024; x += 64) {
-    ctx.fillRect(x, 0, 32, 10);
-    ctx.fillRect(x, 502, 32, 10);
-  }
-  return finish(c, 8);
-}
 
 /**
  * 积水遮罩：黑色底 + 若干柔边白斑，用作水膜层的 alphaMap。
@@ -687,14 +732,14 @@ export function puddleMaskTexture(): THREE.CanvasTexture {
   ctx.fillStyle = "#000";
   ctx.fillRect(0, 0, 512, 512);
 
-  // 线性同余，种子固定 → 每次加载水洼形状一致
+  // 线性同余，种子固定 · 每次加载水洼形状一样
   let seed = 20261028;
   const rand = () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   };
 
-  // 大块积水：边缘用径向渐变糊开，读起来像摊开的水而不是画上去的圆
+  // 大块水洼：边缘用径向渐变糊开，看起来像摊开的水而不是贴上去的圆
   for (let i = 0; i < 26; i += 1) {
     const x = rand() * 512;
     const y = rand() * 512;
@@ -705,7 +750,7 @@ export function puddleMaskTexture(): THREE.CanvasTexture {
     g.addColorStop(1, "rgba(255,255,255,0)");
     ctx.fillStyle = g;
     ctx.beginPath();
-    // 每块水洼由几段半径不同的弧拼成，避免全是标准圆
+  // 每块水洼由几段半径不同的弧拼成，避免全是标准圆
     const lobes = 9;
     for (let s = 0; s <= lobes; s += 1) {
       const a = (s / lobes) * Math.PI * 2;
@@ -737,4 +782,130 @@ export function puddleMaskTexture(): THREE.CanvasTexture {
   // 遮罩只取亮度，不能按 sRGB 采样，否则水洼边缘会偏亮
   texture.colorSpace = THREE.NoColorSpace;
   return texture;
+}
+
+/**
+ * 广场上的岛屿地图牌。和 DOM 地图面板共用 zones.ts 的分区表，
+ * 所以以后挪动区域只需要改一处。
+ */
+export function islandMapTexture(): THREE.CanvasTexture {
+  const size = 1024;
+  const { c, ctx } = canvas(size, size);
+  const pad = 56;
+  const inner = size - pad * 2;
+  const px = (x: number) => pad + ((x + 50) / 100) * inner;
+  const pz = (z: number) => pad + ((z + 50) / 100) * inner;
+
+  ctx.fillStyle = "#07100c";
+  ctx.fillRect(0, 0, size, size);
+
+  // 岛面与海面
+  const sea = ctx.createLinearGradient(0, 0, size, size);
+  sea.addColorStop(0, "#0b1d18");
+  sea.addColorStop(1, "#0d241d");
+  ctx.fillStyle = sea;
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = "#24402c";
+  ctx.fillRect(pad, pad, inner, inner);
+
+  // 海面波纹
+  ctx.strokeStyle = "rgba(159,230,255,0.08)";
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 18; i += 1) {
+    const y = pad + 18 + i * 22;
+    ctx.beginPath();
+    ctx.moveTo(pad, y);
+    for (let x = 0; x <= inner; x += 24) {
+      ctx.lineTo(pad + x, y + Math.sin((x + i * 30) * 0.03) * 5);
+    }
+    ctx.stroke();
+  }
+
+  // 网格
+  ctx.strokeStyle = "rgba(241,236,223,0.06)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i += 1) {
+    const x = pad + (inner / 10) * i;
+    const z = pad + (inner / 10) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, pad);
+    ctx.lineTo(x, pad + inner);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(pad, z);
+    ctx.lineTo(pad + inner, z);
+    ctx.stroke();
+  }
+
+  // 道路
+  ctx.fillStyle = "rgba(196,187,166,0.32)";
+  const road = (x0: number, x1: number, z0: number, z1: number) => {
+    ctx.fillRect(px(x0), pz(z0), px(x1) - px(x0), pz(z1) - pz(z0));
+  };
+  road(-3, 3, 13, 31);
+  road(-3, 3, -17, -13);
+  road(13, 16, -1.6, 3.6);
+  road(-17, -13, -1.6, 3.6);
+  road(3, 15.6, 18.4, 21.6);
+  road(-30, -13, 9.2, 11.4);
+  road(-31.2, -28.8, 11.4, 31.6);
+  road(-35.6, -28.8, 29.2, 31.6);
+  road(15.6, 30.5, 16.8, 19.8);
+  road(35, 37.2, -17, -5);
+  road(28.6, 36, -19, -16.6);
+  road(-16, -13.8, -22, -2);
+  road(-34, -14, -21.6, -19.4);
+
+  const labels: Array<{ x: number; z: number; text: string; color: string; small?: boolean }> = [];
+  for (const zone of ZONES) {
+    const x0 = px(zone.x0);
+    const z0 = pz(zone.z0);
+    const w = px(zone.x1) - x0;
+    const h = pz(zone.z1) - z0;
+    ctx.fillStyle = `${zone.color}2e`;
+    ctx.strokeStyle = `${zone.color}cc`;
+    ctx.lineWidth = zone.id === "roof" || zone.id === "secret" ? 2 : 3;
+    ctx.setLineDash(zone.id === "roof" ? [8, 6] : []);
+    ctx.fillRect(x0, z0, w, h);
+    ctx.strokeRect(x0, z0, w, h);
+    ctx.setLineDash([]);
+    labels.push({ x: x0 + w / 2, z: z0 + h / 2, text: zone.name, color: zone.color, small: w < 120 || h < 90 });
+  }
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  for (const label of labels) {
+    ctx.font = `${label.small ? 16 : 21}px 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+    ctx.fillStyle = "rgba(7,16,12,0.72)";
+    ctx.fillText(label.text, label.x + 1, label.z + 2);
+    ctx.fillStyle = label.color;
+    ctx.fillText(label.text, label.x, label.z + 1);
+  }
+
+  // 出生点
+  const sx = px(0);
+  const sz = pz(30);
+  ctx.fillStyle = "#f1ecdf";
+  ctx.beginPath();
+  ctx.arc(sx, sz, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.font = "600 15px 'Cascadia Code', Consolas, monospace";
+  ctx.fillStyle = "rgba(241,236,223,0.75)";
+  ctx.fillText("START", sx, sz + 24);
+
+  // 边框与标题
+  ctx.strokeStyle = "rgba(216,255,95,0.35)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(18, 18, size - 36, size - 36);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+  ctx.fillStyle = "#d8ff5f";
+  ctx.font = "700 22px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("ISLAND MAP / 岛屿地图", 42, 48);
+  ctx.textAlign = "right";
+  ctx.fillStyle = "rgba(241,236,223,0.55)";
+  ctx.font = "500 16px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("N ↑ / 100 × 100 m", size - 42, 48);
+
+  return finish(c, 8);
 }

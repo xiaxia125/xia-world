@@ -4,9 +4,11 @@ import "./style.css";
 import { AudioSystem } from "./audio";
 import { Environment } from "./environment";
 import { Player } from "./player";
+import { getEmailAddress } from "./profile";
 import { UI } from "./ui";
 import { WeatherSystem } from "./weather";
 import { VoxelWorld } from "./world/world";
+import { ZONES, zoneAt } from "./world/zones";
 import { disposeThreeScene } from "./runtime/dispose-scene";
 import type { BimSceneHandle } from "./bim/bim-scene";
 import { typeLabel as typeLabelOf, type BimElement } from "./bim/building";
@@ -16,10 +18,8 @@ const SAVE_KEY = "voxel-home-v1";
 const CURRENT_SAVE_KEY = "xia-home-save";
 /** 操作说明只在第一次进岛时自动弹一次；用户自己按 H 不算。 */
 const HELP_SEEN_KEY = "xia-home-help-seen";
-const EGG_TOTAL = 7;
+const EGG_TOTAL = 5;
 const EGG_IDS = new Set([
-  "arcade",
-  "cinema",
   "court",
   "duck",
   "radio",
@@ -41,6 +41,7 @@ interface SaveData {
   music?: boolean;
   timeScale?: number;
   eggs?: string[];
+  stamps?: string[];
 }
 
 function loadSave(): SaveData {
@@ -128,6 +129,13 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       .map((id) => (id === "legacy" ? "workstation" : id))
       .filter((id): id is string => typeof id === "string" && EGG_IDS.has(id)),
   );
+  /** 访客印章：进过一个分区就记一个 id，地图面板和 HUD 都读它。 */
+  const zoneIds = new Set(ZONES.map((zone) => zone.id));
+  const stamps = new Set<string>(
+    (Array.isArray(saved.stamps) ? saved.stamps : []).filter(
+      (id): id is string => typeof id === "string" && zoneIds.has(id),
+    ),
+  );
   const state = {
     started: false,
     quality,
@@ -162,6 +170,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     },
   });
   weather.setShelters(world.shelterZones);
+  world.setWeather(weather.type);
   const rainLevel = () =>
     weather.rainAmount * (weather.isIndoors(camera.position) ? 0.34 : 1);
   motionPreference.addEventListener(
@@ -187,7 +196,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   ui = new UI({
     onEnter: () => enterWorld(),
-    onClose2D: (requestLock) => close2D(requestLock),
     onWeather: () => cycleWeather(),
     onSetWeather: (type) => setWeather(type, true),
     onQuality: (next) => applyQuality(next),
@@ -216,8 +224,13 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     },
     onSound: () => toggleSound(),
     onMusic: () => toggleMusic(),
-    onArcade: () => openArcade(),
-    onCinema: () => openCinema(),
+    onCapturePhoto: () => capturePhoto(),
+    onExitPhoto: () => exitPhoto(),
+    onPianoKey: (index) => {
+      if (!pianoActive) return;
+      strikePiano(index);
+    },
+    onExitPiano: () => exitPiano(),
     onResume: () => resumeGame(),
   });
 
@@ -226,6 +239,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   ui.setQuality(quality);
   ui.setTimeScale(timeScale);
   ui.setEggs(eggs.size, EGG_TOTAL);
+  ui.setStamps([...stamps]);
   world.setEggCount(eggs.size);
   ui.setWeather(weather.label, weather.icon, weather.type);
   ui.setSound(true);
@@ -262,6 +276,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   function setWeather(type: WeatherType, announce: boolean) {
     weather.setType(type);
     environment.setWeather(type);
+    world.setWeather(type);
     ui.setWeather(weather.label, weather.icon, type);
     if (announce) ui.toast(`天气：${weather.label}${type === "rain" ? " · 去屋顶听听电台？" : ""}`, 2800);
     audio?.click();
@@ -335,33 +350,119 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     save();
   }
 
-  function openPage(file: string, label: string, egg?: string) {
-    if (!state.started) return;
-    if (ui.isSettingsOpen) ui.closeSettings(false);
-    const base = import.meta.env.BASE_URL || "./";
-    ui.open2D(`${base}pages/${file}`, label);
-    player.enabled = false;
-    ui.hidePause();
-    // 进入街机/影院后 3D 世界的声音先静音，避免和页面里的声音叠在一起。
-    // 用 setWorldPaused 而不是 setVolume，回来时才能准确恢复原来的音量。
-    audio.setWorldPaused(true);
-    if (egg) collectEgg(egg);
+  // ------------------------------------------------------------ 拍照 / 钢琴
+
+  function enterPhoto() {
+    if (ui.isBlocking) return;
+    exitTelescope(false);
+    if (player.seated) standUpFromSeat(false);
+    player.enabled = true;
+    // 先立起面板状态再释放鼠标：pointerlockchange 是异步的，但顺序稳一点。
+    ui.setPhotoOpen(true);
+    if (document.pointerLockElement) document.exitPointerLock();
+    ui.setPrompt(null);
+    ui.toast("拍照模式：点画面恢复视角，F 拍照，ESC 退出。", 3600);
   }
 
-  function openArcade() {
-    openPage("arcade.html", "ARCADE / XIA RUNNER", "arcade");
-    audio.arcade();
+  function exitPhoto() {
+    if (!ui.isPhotoOpen) return;
+    ui.setPhotoOpen(false);
+    resumeGame();
   }
 
-  function openCinema() {
-    openPage("cinema.html", "CINEMA / SMALL WORLD", "cinema");
-    audio.cinema();
+  /** 把当前帧画到一张离屏 canvas 上，右下角压一枚水印，再下载成 PNG。 */
+  function capturePhoto() {
+    if (!ui.isPhotoOpen) return;
+    renderer.render(scene, camera);
+    const source = renderer.domElement;
+    const out = document.createElement("canvas");
+    out.width = source.width;
+    out.height = source.height;
+    const ctx = out.getContext("2d");
+    if (!ctx) return;
+    ctx.drawImage(source, 0, 0);
+
+    const pad = Math.max(28, Math.round(out.width * 0.03));
+    const big = Math.max(20, Math.round(out.width * 0.022));
+    const small = Math.max(13, Math.round(out.width * 0.012));
+    ctx.fillStyle = "rgba(7,16,12,0.55)";
+    ctx.fillRect(pad * 0.5, out.height - pad * 2.4, pad * 9.6, pad * 1.9);
+
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = "#f1ecdf";
+    ctx.font = `800 ${big}px 'Arial Black', 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+    ctx.fillText("XIA HOME", pad, out.height - pad * 1.35);
+    ctx.fillStyle = "rgba(241,236,223,0.7)";
+    ctx.font = `500 ${small}px 'Cascadia Code', Consolas, monospace`;
+    const zone = zoneAt(player.position.x, player.position.y + 0.6, player.position.z);
+    ctx.fillText(
+      `${zone?.name ?? "岛上"} · ${environment.getTimeLabel()} · ${weather.label} · 2026`,
+      pad,
+      out.height - pad * 0.8,
+    );
+
+    out.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `xia-home-${Date.now()}.png`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+    }, "image/png");
+    audio.click();
+    ui.toast("照片已保存到下载目录。", 2600);
   }
 
-  function close2D(requestLock = true) {
-    ui.close2D();
-    audio.setWorldPaused(false);
-    resumeGame(requestLock);
+  let pianoActive = false;
+
+  function strikePiano(index: number) {
+    audio.pianoNote(index);
+    world.pressPianoKey(index);
+    ui.strikePianoNote(index);
+  }
+
+  function enterPiano() {
+    if (pianoActive) return;
+    pianoActive = true;
+    ui.setPrompt(null);
+    // 坐在琴凳上弹：以前只弹出一个 toast，画面和人都没有反应。
+    sitDown(world.pianoSeat, false);
+    player.pitch = -0.24;
+    ui.setPianoOpen(true);
+    audio.click();
+    ui.toast("按 1—8 弹音，也可以点屏幕上的琴键；E 或 ESC 收起。", 4600);
+  }
+
+  function exitPiano() {
+    if (!pianoActive) return;
+    pianoActive = false;
+    ui.setPianoOpen(false);
+    standUpFromSeat(false);
+    ui.toast("钢琴合上了。", 1800);
+  }
+
+  async function copyEmail() {
+    const address = getEmailAddress();
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(address);
+        ui.toast(`已复制公开邮箱：${address}`, 4200);
+        return;
+      }
+    } catch {
+      // 剪贴板被拒绝时继续走下面的兜底
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = address;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand("copy");
+    textarea.remove();
+    ui.toast(ok ? `已复制公开邮箱：${address}` : `公开邮箱：${address}`, 4600);
   }
 
   function resumeGame(requestLock = true) {
@@ -522,12 +623,22 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   }
 
   /** 坐下：位置与朝向来自座椅代理上的 userData，起身时由 Player 自己还原。 */
-  function sitDown(anchor: { x: number; y: number; z: number; yaw: number; eyeOffset: number }) {
+  function sitDown(anchor: {
+    x: number;
+    y: number;
+    z: number;
+    yaw: number;
+    eyeOffset: number;
+    lookUp?: boolean;
+  }, announce = true) {
     player.sitAt(anchor.x, anchor.y, anchor.z, anchor.yaw, anchor.eyeOffset);
+    // 天台躺椅坐下后默认抬头看星星；Player 下一帧会把 pitch 同步到相机。
+    if (anchor.lookUp) player.pitch = 1.02;
     ui.setSeated(true);
     ui.setPrompt(null);
+    if (!announce) return;
     audio.click();
-    ui.toast("坐下了。按 E 或 W 起身。", 2600);
+    ui.toast(anchor.lookUp ? "躺下了。抬头就是星空，按 E 或 W 起身。" : "坐下了。按 E 或 W 起身。", 2800);
   }
 
   function standUpFromSeat(announce = true) {
@@ -571,6 +682,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   function interact() {
     if (!state.started || ui.isBlocking) return;
+    // 钢琴模式里 E 就是「合上琴盖」。
+    if (pianoActive) {
+      exitPiano();
+      return;
+    }
     // 坐着时任何 E 都当起身，不看准星对准了什么——否则对着空处按 E 会没反应。
     if (player.seated) {
       standUpFromSeat();
@@ -586,6 +702,15 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     const reading = world.signalReadings.get(target.id);
     if (reading) {
       ui.setScopeReading({ ...reading, id: target.id });
+      currentTarget = null;
+      checkTimer = 0;
+      save();
+      return;
+    }
+    // 小径石碑和风车：贴图上只留年份，正文用阅读面板展开。
+    const plaque = world.plaqueReadings.get(target.id);
+    if (plaque) {
+      ui.openReading({ ...plaque, id: target.id });
       currentTarget = null;
       checkTimer = 0;
       save();
@@ -623,11 +748,37 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       case "bim":
         void enterBim();
         break;
-      case "arcade":
-        openArcade();
+      case "map":
+        ui.openMap();
         break;
-      case "cinema":
-        openCinema();
+      case "photo":
+        enterPhoto();
+        break;
+      case "piano":
+        enterPiano();
+        break;
+      case "campfire": {
+        const on = world.toggleCampfire();
+        ui.toast(on ? "篝火点起来了。火星正往上飘。" : "篝火熄了，只剩一点余温。", 2800);
+        break;
+      }
+      case "camp-seat":
+      case "boat":
+      case "sky-lounger": {
+        const seat = target.object.userData.seat as
+          | { x: number; y: number; z: number; yaw: number; eyeOffset: number; lookUp?: boolean }
+          | undefined;
+        if (seat) sitDown(seat);
+        break;
+      }
+      case "cat": {
+        world.petCat();
+        audio.purr();
+        ui.toast("猫蹭了蹭你的手，尾巴慢慢摆着。", 3000);
+        break;
+      }
+      case "mailbox":
+        void copyEmail();
         break;
       case "duck": {
         const third = world.feedDuck(camera.position);
@@ -638,13 +789,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
         } else {
           ui.toast("面包屑撒下去了，鸭子和鱼都往这边游。", 2800);
         }
-        break;
-      }
-      case "cinema-seat": {
-        const seat = target.object.userData.seat as
-          | { x: number; y: number; z: number; yaw: number; eyeOffset: number }
-          | undefined;
-        if (seat) sitDown(seat);
         break;
       }
       case "ball":
@@ -696,7 +840,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     save();
     if (eggs.size === EGG_TOTAL) {
       defer(() => {
-        ui.toast("7/7 · 你把这个家逛完了。下次见。", 5200);
+        ui.toast(`${EGG_TOTAL}/${EGG_TOTAL} · 你把这个家逛完了。下次见。`, 5200);
       }, 3800);
     }
   }
@@ -718,6 +862,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       music: musicOn,
       timeScale,
       eggs: [...eggs],
+      stamps: [...stamps],
     };
     try {
       localStorage.setItem(CURRENT_SAVE_KEY, JSON.stringify(data));
@@ -749,6 +894,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     checkTimer = 0.12;
     currentTarget = null;
     if (!state.started || ui.isBlocking || !player.enabled) {
+      ui.setPrompt(null);
+      return;
+    }
+    // 钢琴模式由琴键条接管，准星不再抢提示；坐下状态留给 exitPiano 自己处理。
+    if (pianoActive) {
       ui.setPrompt(null);
       return;
     }
@@ -812,6 +962,31 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       return;
     }
 
+    // 钢琴模式：1—8 弹音，E / Esc 合上；一走动就自动收起，不把人锁在琴前。
+    if (pianoActive) {
+      if (event.code === "Escape" || event.code === "KeyE") {
+        event.preventDefault();
+        exitPiano();
+        return;
+      }
+      const digit = /^Digit([1-8])$/.exec(event.code);
+      if (digit) {
+        event.preventDefault();
+        strikePiano(Number(digit[1]) - 1);
+        return;
+      }
+      if (
+        event.code === "KeyW" ||
+        event.code === "KeyA" ||
+        event.code === "KeyS" ||
+        event.code === "KeyD" ||
+        event.code === "Space" ||
+        event.code.startsWith("Arrow")
+      ) {
+        exitPiano();
+      }
+    }
+
     if (event.code === "KeyH") {
       event.preventDefault();
       if (ui.isHelpOpen) ui.closeHelp();
@@ -838,14 +1013,19 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     } else if (event.code === "KeyM") {
       event.preventDefault();
       toggleMusic();
-    } else if (event.code === "KeyG") {
+    } else if (event.code === "KeyN") {
       event.preventDefault();
-      if (!ui.isBlocking) openArcade();
-    } else if (event.code === "KeyC") {
-      event.preventDefault();
-      if (!ui.isBlocking) openCinema();
+      if (ui.isMapOpen) ui.closeMap();
+      else if (!ui.isBlocking) ui.openMap();
+    } else if (event.code === "KeyF") {
+      if (ui.isPhotoOpen) {
+        event.preventDefault();
+        capturePhoto();
+      }
     } else if (event.code === "Escape") {
-      if (ui.is2DOpen) close2D();
+      if (ui.isPhotoOpen) exitPhoto();
+      else if (ui.isMapOpen) ui.closeMap();
+      else if (ui.isReadingOpen) ui.closeReading();
       else if (ui.isSettingsOpen) ui.closeSettings();
       else if (ui.isHelpOpen) ui.closeHelp();
     }
@@ -962,6 +1142,21 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     if (uiClock <= 0) {
       uiClock = 0.25;
       ui.setClock(environment.getTimeLabel(), environment.getPhaseLabel());
+      if (state.started) {
+        // yaw = 0 朝 -z（北）；罗盘顺时针，0° 指北。
+        const heading = (((-player.yaw * 180) / Math.PI) % 360 + 360) % 360;
+        const zone = zoneAt(player.position.x, player.position.y + 0.6, player.position.z);
+        ui.setCompass(heading, zone?.name ?? "岛上");
+        ui.setPosition(player.position.x, player.position.z);
+        // 第一次走进一个分区就盖一枚访客印章，地图和 HUD 立刻能看到。
+        if (zone && !stamps.has(zone.id)) {
+          stamps.add(zone.id);
+          ui.setStamps([...stamps]);
+          audio.click();
+          ui.toast(`访客印章 +1 · ${zone.name}`, 2400);
+          save();
+        }
+      }
     }
 
     if (!state.started) {
@@ -1001,6 +1196,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       environment.update(dt, camera.position);
       weather.update(dt, camera.position);
       world.setRainAmount(weather.rainAmount);
+      world.setPlayerPosition(player.position.x, player.position.z);
       world.update(dt, elapsed);
       world.setNight(environment.night);
       audio.setRain(rainLevel());
@@ -1085,6 +1281,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     camera,
     scene,
     audio,
+    /** UI 快照桥：验收时用来直接打开钢琴条 / 拍照层等 DOM 面板。 */
+    ui,
     /** BIM 查看器的句柄；不在查看器里时为 null。验收要读它自己的相机与统计。 */
     get bim() {
       return bimHandle;

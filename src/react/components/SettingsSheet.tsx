@@ -55,13 +55,6 @@ export function SettingsSheet({ snapshot, handlers, onClose }: SettingsSheetProp
             背景音乐 · {snapshot.musicOn ? "开" : "关"}
           </button>
         </div>
-        <div className="field">
-          <span>天台娱乐</span>
-          <div className="weather-buttons play-buttons">
-            <button id="btn-arcade" type="button" onClick={handlers.onArcade}>街机厅</button>
-            <button id="btn-cinema" type="button" onClick={handlers.onCinema}>天台影院</button>
-          </div>
-        </div>
         <label className="field field-row">
           <span>画质</span>
           <select id="set-quality" value={snapshot.quality} onChange={changeQuality}>
@@ -89,9 +82,9 @@ export function SettingsSheet({ snapshot, handlers, onClose }: SettingsSheetProp
         </div>
         <div className="sheet-divider" />
         <button id="btn-reset" className="mini-button danger" type="button" onClick={() => {
-          if (window.confirm("确定要清空位置、设置和彩蛋进度吗？")) handlers.onReset();
+          if (window.confirm("确定要清空位置、设置、印章和彩蛋进度吗？")) handlers.onReset();
         }}>重置探索进度</button>
-        <p className="sheet-note">位置、设置和彩蛋会自动保存在这台设备上。世界每 12 分钟完成一次昼夜循环。</p>
+        <p className="sheet-note">位置、设置、印章和彩蛋会自动保存在这台设备上。世界每 12 分钟完成一次昼夜循环。</p>
       </div>
     </aside>
   );

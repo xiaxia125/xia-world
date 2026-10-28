@@ -58,7 +58,7 @@ export class AudioSystem {
   }
 
   /**
-   * 进入 2D 页面（街机/影院）时把 3D 世界的声音整体淡出，返回时恢复。
+   * 进入别的视图（BIM 查看器、拍照取景）时把 3D 世界的声音整体淡出，返回时恢复。
    * 不走 setVolume，避免把用户设置的总音量冲掉。
    */
   setWorldPaused(paused: boolean) {
@@ -359,17 +359,40 @@ export class AudioSystem {
     osc.stop(now + 0.24);
   }
 
-  arcade() {
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((freq, i) => {
-      this.defer(() => this.tone(freq, 0.14, "square", 0.022), i * 65);
-    });
+  /** 街头钢琴：1—8 对应一组五声音阶，短促的三角波加一点衰减。 */
+  pianoNote(index: number) {
+    const scale = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25];
+    const freq = scale[((index % scale.length) + scale.length) % scale.length]!;
+    this.tone(freq, 0.6, "triangle", 0.055);
+    this.defer(() => this.tone(freq * 2, 0.35, "sine", 0.02), 12);
   }
 
-  cinema() {
-    this.tone(164.81, 2.2, "sine", 0.03);
-    this.defer(() => this.tone(220, 2.6, "triangle", 0.022), 220);
-    this.defer(() => this.tone(329.63, 2.8, "sine", 0.014), 420);
+  /** 摸猫：低频颤音，音量很低，像贴着耳朵听到的呼噜。 */
+  purr() {
+    if (!this.ctx || !this.master) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 42;
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 22;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 14;
+    lfo.connect(lfoGain).connect(osc.frequency);
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 220;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.05, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.1);
+    osc.connect(filter).connect(gain).connect(this.master);
+    osc.start(now);
+    lfo.start(now);
+    osc.stop(now + 1.2);
+    lfo.stop(now + 1.2);
   }
 
   click() {

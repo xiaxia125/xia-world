@@ -14,7 +14,6 @@ export interface SignalEntry extends Pick<SignalCopy, "index" | "label"> {
 
 export interface UIHandlers {
   onEnter: () => void;
-  onClose2D: (requestLock?: boolean) => void;
   onWeather: () => void;
   onSetWeather: (weather: WeatherType) => void;
   onQuality: (quality: Quality) => void;
@@ -24,8 +23,10 @@ export interface UIHandlers {
   onReset: () => void;
   onSound: () => void;
   onMusic: () => void;
-  onArcade: () => void;
-  onCinema: () => void;
+  onCapturePhoto: () => void;
+  onExitPhoto: () => void;
+  onPianoKey: (index: number) => void;
+  onExitPiano: () => void;
   onResume: () => void;
 }
 
@@ -53,14 +54,32 @@ export interface UISnapshot {
   settingsOpen: boolean;
   /** 操作说明面板：新访客不知道 16 个交互点能做什么，H 键随时可查。 */
   helpOpen: boolean;
-  overlayOpen: boolean;
-  overlayUrl: string;
-  overlayLabel: string;
+  /** 岛屿地图：从地图牌或 HUD 打开，显示分区与已盖章进度。 */
+  mapOpen: boolean;
+  /** 已盖章的分区 id。 */
+  stamps: string[];
+  /** 小径石碑 / 风车的正文卡片；null 表示没打开。 */
+  reading: SignalReading | null;
+  /** 拍照模式：隐藏 HUD，只保留取景框和快门。 */
+  photoOpen: boolean;
+  /** 钢琴模式：坐在琴凳上，画面下方出现 1—8 的琴键条。 */
+  pianoOpen: boolean;
+  /** 最近按下的琴键（0..7），PianoBar 用它做一次高亮。 */
+  pianoNote: number;
+  /** 每次按键递增，避免连按同一个键时 React 看不到变化。 */
+  pianoStrike: number;
+  /** 当前朝向，0 = 北（-z），顺时针增长。 */
+  heading: number;
+  /** 最近的区域名，HUD 罗盘下方显示。 */
+  nearestZone: string;
+  /** 玩家平面坐标，地图面板里的「你在这里」。 */
+  playerX: number;
+  playerZ: number;
   profileOpen: boolean;
   profileTab: ProfileTab;
   pauseVisible: boolean;
   touchActive: boolean;
-  /** 天台影院坐姿：坐着时 HUD 提示换成「按 E 起身」，WASD 不再移动。 */
+  /** 天台躺椅 / 篝火 / 小船坐姿：坐着时 HUD 提示换成「按 E 起身」。 */
   seated: boolean;
   /** 望远镜目镜面板：打开时在画面上叠一层取景框，文字用 DOM 渲染保证清晰。 */
   scopeOpen: boolean;
@@ -108,7 +127,7 @@ const initialSnapshot: UISnapshot = {
   soundOn: true,
   musicOn: true,
   eggCount: 0,
-  eggTotal: 7,
+  eggTotal: 5,
   sensitivity: 1,
   volume: 0.55,
   quality: "high",
@@ -118,9 +137,17 @@ const initialSnapshot: UISnapshot = {
   toastVisible: false,
   settingsOpen: false,
   helpOpen: false,
-  overlayOpen: false,
-  overlayUrl: "about:blank",
-  overlayLabel: "PUBLIC PROFILE",
+  mapOpen: false,
+  stamps: [],
+  reading: null,
+  photoOpen: false,
+  pianoOpen: false,
+  pianoNote: -1,
+  pianoStrike: 0,
+  heading: 0,
+  nearestZone: "岛上",
+  playerX: 0,
+  playerZ: 30,
   profileOpen: false,
   profileTab: "overview",
   pauseVisible: false,
@@ -165,7 +192,6 @@ function requiredElement<T extends HTMLElement>(id: string): T {
 
 export const uiActions: UIHandlers = {
   onEnter: () => activeHandlers?.onEnter(),
-  onClose2D: (requestLock) => activeHandlers?.onClose2D(requestLock),
   onWeather: () => activeHandlers?.onWeather(),
   onSetWeather: (weather) => activeHandlers?.onSetWeather(weather),
   onQuality: (quality) => activeHandlers?.onQuality(quality),
@@ -175,8 +201,10 @@ export const uiActions: UIHandlers = {
   onReset: () => activeHandlers?.onReset(),
   onSound: () => activeHandlers?.onSound(),
   onMusic: () => activeHandlers?.onMusic(),
-  onArcade: () => activeHandlers?.onArcade(),
-  onCinema: () => activeHandlers?.onCinema(),
+  onCapturePhoto: () => activeHandlers?.onCapturePhoto(),
+  onExitPhoto: () => activeHandlers?.onExitPhoto(),
+  onPianoKey: (index) => activeHandlers?.onPianoKey(index),
+  onExitPiano: () => activeHandlers?.onExitPiano(),
   onResume: () => activeHandlers?.onResume(),
 };
 
@@ -192,6 +220,13 @@ export const ui = {
   openProfile: (tab: ProfileTab = "overview") => activeUI?.openProfile(tab),
   closeProfile: (resume = true) => activeUI?.closeProfile(resume),
   selectProfileTab: (tab: ProfileTab) => activeUI?.selectProfileTab(tab),
+  openMap: () => activeUI?.openMap(),
+  closeMap: (resume = true) => activeUI?.closeMap(resume),
+  openReading: (reading: SignalReading) => activeUI?.openReading(reading),
+  closeReading: (resume = true) => activeUI?.closeReading(resume),
+  setPhotoOpen: (open: boolean) => activeUI?.setPhotoOpen(open),
+  setPianoOpen: (open: boolean) => activeUI?.setPianoOpen(open),
+  strikePianoNote: (index: number) => activeUI?.strikePianoNote(index),
   hidePause: () => activeUI?.hidePause(),
   dispose: () => activeUI?.dispose(),
 };
@@ -293,6 +328,8 @@ export class UI {
     updateSnapshot({
       settingsOpen: true,
       helpOpen: false,
+      mapOpen: false,
+      reading: null,
       pauseVisible: false,
       touchActive: false,
     });
@@ -302,7 +339,7 @@ export class UI {
   closeSettings(resume = true) {
     updateSnapshot({
       settingsOpen: false,
-      touchActive: this.isTouch && !snapshot.overlayOpen,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
     });
     if (resume) this.handlers.onResume();
   }
@@ -319,6 +356,8 @@ export class UI {
     updateSnapshot({
       helpOpen: true,
       settingsOpen: false,
+      mapOpen: false,
+      reading: null,
       pauseVisible: false,
       touchActive: false,
       prompt: null,
@@ -329,8 +368,7 @@ export class UI {
   closeHelp(resume = true) {
     updateSnapshot({
       helpOpen: false,
-      touchActive:
-        this.isTouch && !snapshot.settingsOpen && !snapshot.overlayOpen && !snapshot.profileOpen,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
     });
     if (resume) this.handlers.onResume();
   }
@@ -339,8 +377,100 @@ export class UI {
     return snapshot.helpOpen;
   }
 
-  get is2DOpen() {
-    return snapshot.overlayOpen;
+  /** 任意会挡住世界操作的面板。触屏控件和暂停遮罩都按它决定要不要出现。 */
+  private anyPanelOpen() {
+    return (
+      snapshot.settingsOpen ||
+      snapshot.helpOpen ||
+      snapshot.mapOpen ||
+      snapshot.profileOpen ||
+      snapshot.bimOpen ||
+      snapshot.reading !== null
+    );
+  }
+
+  // ------------------------------------------------------------- 地图 / 阅读
+
+  openMap() {
+    updateSnapshot({
+      mapOpen: true,
+      helpOpen: false,
+      settingsOpen: false,
+      pauseVisible: false,
+      touchActive: false,
+      prompt: null,
+    });
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  closeMap(resume = true) {
+    updateSnapshot({
+      mapOpen: false,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
+    });
+    if (resume) this.handlers.onResume();
+  }
+
+  get isMapOpen() {
+    return snapshot.mapOpen;
+  }
+
+  /** 小径石碑 / 风车正文。打开时释放鼠标，正文交给 DOM 渲染，走近才展开。 */
+  openReading(reading: SignalReading) {
+    updateSnapshot({
+      reading,
+      pauseVisible: false,
+      touchActive: false,
+      prompt: null,
+    });
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+
+  closeReading(resume = true) {
+    updateSnapshot({
+      reading: null,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
+    });
+    if (resume) this.handlers.onResume();
+  }
+
+  get isReadingOpen() {
+    return snapshot.reading !== null;
+  }
+
+  /** 拍照模式：隐藏 HUD 只留取景框。退出时不强制重新锁定，交给调用方。 */
+  setPhotoOpen(open: boolean) {
+    updateSnapshot({
+      photoOpen: open,
+      touchActive: open ? false : this.isTouch && !this.anyPanelOpen(),
+    });
+    if (open && document.pointerLockElement) document.exitPointerLock();
+  }
+
+  get isPhotoOpen() {
+    return snapshot.photoOpen;
+  }
+
+  /** 钢琴模式：只换 HUD 下方的浮层，不释放鼠标锁定，免得弹到一半弹回暂停遮罩。 */
+  setPianoOpen(open: boolean) {
+    updateSnapshot({ pianoOpen: open, pianoNote: -1 });
+  }
+
+  strikePianoNote(index: number) {
+    updateSnapshot({ pianoNote: index, pianoStrike: snapshot.pianoStrike + 1 });
+  }
+
+  setStamps(stamps: readonly string[]) {
+    updateSnapshot({ stamps: [...stamps] });
+  }
+
+  /** 罗盘与最近分区：engine 每 0.25 秒推一次，heading 单位是度。 */
+  setCompass(heading: number, nearestZone: string) {
+    updateSnapshot({ heading, nearestZone });
+  }
+
+  setPosition(x: number, z: number) {
+    updateSnapshot({ playerX: x, playerZ: z });
   }
 
   get isProfileOpen() {
@@ -350,10 +480,12 @@ export class UI {
   get isBlocking() {
     return (
       snapshot.settingsOpen ||
-      snapshot.overlayOpen ||
+      snapshot.mapOpen ||
       snapshot.profileOpen ||
       snapshot.helpOpen ||
-      snapshot.bimOpen
+      snapshot.bimOpen ||
+      snapshot.photoOpen ||
+      snapshot.reading !== null
     );
   }
 
@@ -374,6 +506,8 @@ export class UI {
       bimSelection: null,
       settingsOpen: false,
       helpOpen: false,
+      mapOpen: false,
+      reading: null,
       pauseVisible: false,
       touchActive: false,
       prompt: null,
@@ -412,7 +546,7 @@ export class UI {
       bimOrigin: "",
       bimFloor: null,
       bimSelection: null,
-      touchActive: this.isTouch && !snapshot.settingsOpen && !snapshot.overlayOpen,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
     });
     if (resume) this.handlers.onResume();
   }
@@ -427,6 +561,8 @@ export class UI {
       profileTab: tab,
       settingsOpen: false,
       helpOpen: false,
+      mapOpen: false,
+      reading: null,
       pauseVisible: false,
       touchActive: false,
       prompt: null,
@@ -437,34 +573,13 @@ export class UI {
   closeProfile(resume = true) {
     updateSnapshot({
       profileOpen: false,
-      touchActive: this.isTouch && !snapshot.settingsOpen && !snapshot.overlayOpen,
+      touchActive: this.isTouch && !this.anyPanelOpen(),
     });
     if (resume) this.handlers.onResume();
   }
 
   selectProfileTab(tab: ProfileTab) {
     if (snapshot.profileOpen) updateSnapshot({ profileTab: tab });
-  }
-
-  open2D(url: string, label = "PUBLIC PROFILE") {
-    updateSnapshot({
-      overlayOpen: true,
-      overlayUrl: url,
-      overlayLabel: label,
-      helpOpen: false,
-      pauseVisible: false,
-      touchActive: false,
-      prompt: null,
-    });
-    if (document.pointerLockElement) document.exitPointerLock();
-  }
-
-  close2D() {
-    updateSnapshot({
-      overlayOpen: false,
-      overlayUrl: "about:blank",
-      touchActive: this.isTouch && !snapshot.settingsOpen,
-    });
   }
 
   showPause(show: boolean) {
@@ -482,13 +597,7 @@ export class UI {
 
   setTouchActive(active: boolean) {
     updateSnapshot({
-      touchActive:
-        active &&
-        this.isTouch &&
-        !snapshot.settingsOpen &&
-        !snapshot.overlayOpen &&
-        !snapshot.profileOpen &&
-        !snapshot.helpOpen,
+      touchActive: active && this.isTouch && !this.anyPanelOpen(),
     });
   }
 
