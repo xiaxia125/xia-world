@@ -969,7 +969,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
         exitPiano();
         return;
       }
-      const digit = /^Digit([1-8])$/.exec(event.code);
+      const digit = /^(?:Digit|Numpad)([1-8])$/.exec(event.code);
       if (digit) {
         event.preventDefault();
         strikePiano(Number(digit[1]) - 1);
@@ -1283,6 +1283,13 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     audio,
     /** UI 快照桥：验收时用来直接打开钢琴条 / 拍照层等 DOM 面板。 */
     ui,
+    /** 验收用：无 rAF 的自动化窗口里没法靠准星按 E，直接进出钢琴模式。 */
+    enterPiano,
+    exitPiano,
+    /** 验收用：读钢琴模式开关。 */
+    get pianoActive() {
+      return pianoActive;
+    },
     /** BIM 查看器的句柄；不在查看器里时为 null。验收要读它自己的相机与统计。 */
     get bim() {
       return bimHandle;

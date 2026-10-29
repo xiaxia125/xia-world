@@ -2358,21 +2358,21 @@ export class VoxelWorld {
     this.addBox(tx - 1.45, 0.85, tz, 0.08, 1.0, 1.4, 0x241d16, { solid: false, edge: false });
     this.addBox(tx, 1.92, tz, 0.9, 0.12, 0.9, C.lime, { glow: true, solid: false, edge: false });
 
-    // 营地牌移到新入口（池塘北岸那条路的东头），牌面朝南，走路过来正好读。
-    for (const offset of [-1.02, 1.02]) {
-      this.addBox(30.9 + offset, 0.7, 15.62, 0.1, 1.4, 0.1, C.woodDark, {
+    // 营地牌：立在新入口北侧、牌面朝西——沿池塘北岸走过来正好迎面读到。
+    for (const offset of [-0.86, 0.86]) {
+      this.addBox(30.9, 0.7, 15.4 - offset, 0.1, 1.4, 0.1, C.woodDark, {
         solid: false,
         tag: "camp-sign",
       });
     }
     this.addSign(
       signTexture("CAMP", "FIRE / TENT / SLOW DOWN", "#ff8a4c"),
-      2.4,
-      0.6,
+      2.2,
+      0.55,
       30.9,
       1.55,
-      15.6,
-      0,
+      15.4,
+      -Math.PI / 2,
     );
   }
 
@@ -2439,12 +2439,12 @@ export class VoxelWorld {
     this.group.add(boat);
     this.interactables.push({ id: "boat", object: boat, label: "坐进小船", maxDistance: 3.0 });
 
-    // 池塘指示牌：站在池塘西北角的岸边，牌面朝西南——从支路走过来能读，
-    // 站在水边回头看也能读。以前是一块 27.75 m 处悬空 1.55 m 的贴片，
-    // 没有立柱，远看像浮在水面上。
-    const signX = 17.3;
-    const signZ = 19.2;
-    const signRot = -Math.PI / 5;
+    // 池塘指示牌：从支路过来先看到正面，所以牌面朝西（来路方向）。
+    // 位置退到池塘西岸的草地上（x=15.2, z=22.9），既不在路的铺装里，
+    // 也不会挡住沿北岸去营地的通道。
+    const signX = 15.2;
+    const signZ = 22.9;
+    const signRot = -Math.PI / 2;
     for (const offset of [-0.86, 0.86]) {
       this.addBox(
         signX + Math.cos(signRot) * offset,
@@ -3262,7 +3262,8 @@ export class VoxelWorld {
       [-14.5, -6.5],
       [14.6, -6.2],
       [28.5, 14.2],
-      [-28.5, 14.0],
+      // 原先这丛正好压在五年小径东缘（路 x=-31.2..-28.8），走路会从叶子里穿过去。
+      [-26.9, 15.0],
     ]) {
       this.addBox(x, 0.6, z, 1.8, 1.2, 1.5, C.leafDark, { solid: false, edge: false });
       this.addBox(x + 0.4, 1.0, z - 0.2, 1.1, 0.7, 1.0, C.leaf, { solid: false, edge: false });
@@ -3291,8 +3292,8 @@ export class VoxelWorld {
       [18.4, 15.4],
       [28.4, 15.4],
       [-17.5, 12.5],
-      // 五年小径转角：往西让出 1.2 m，不再挡在路中间。
-      [-32.5, 12.4],
+      // 五年小径转角：往南退到 z=14.8，避开 x=-34 那棵树的树冠（原位置灯头插进叶子里）。
+      [-32.4, 14.8],
     ];
 
     for (const [x, z] of positions) {
