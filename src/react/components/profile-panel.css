@@ -849,13 +849,7 @@
   margin-top: 5px;
 }
 
-/* GitHub 链接行：与邮箱操作区分开，放在复制状态之下 */
-.profile-email-actions--links {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--profile-line);
-}
-
+/* 联系方式只保留邮箱；不再放置 GitHub 或源码链接。 */
 .profile-email-status {
   color: var(--profile-faint);
   font-family: var(--mono);

@@ -30,6 +30,8 @@ export interface UIHandlers {
   onPianoKey: (index: number) => void;
   onExitPiano: () => void;
   onResume: () => void;
+  /** 指针类型变了（开发者工具切设备模拟、二合一设备插拔触屏）时通知引擎。 */
+  onTouchModeChange?: (touch: boolean) => void;
 }
 
 export interface UISnapshot {
@@ -187,9 +189,39 @@ export const ui = {
   closeSettings: (resume = true) => activeUI?.closeSettings(resume),
   openHelp: () => activeUI?.openHelp(),
   closeHelp: (resume = true) => activeUI?.closeHelp(resume),
-  openProfile: (tab: ProfileTab = "overview") => activeUI?.openProfile(tab),
-  closeProfile: (resume = true) => activeUI?.closeProfile(resume),
-  selectProfileTab: (tab: ProfileTab) => activeUI?.selectProfileTab(tab),
+  // 引擎没起来（WebGL 不可用、初始化抛错）时 activeUI 是 null，但职业档案仍然要看。
+  // 这几个方法直接改快照，让 React 面板在没有 Three.js 的情况下也能打开、切页、关闭。
+  openProfile: (tab: ProfileTab = "overview") => {
+    if (activeUI) {
+      activeUI.openProfile(tab);
+      return;
+    }
+    updateSnapshot({
+      profileOpen: true,
+      profileTab: tab,
+      settingsOpen: false,
+      helpOpen: false,
+      mapOpen: false,
+      reading: null,
+      pauseVisible: false,
+      touchActive: false,
+      prompt: null,
+    });
+  },
+  closeProfile: (resume = true) => {
+    if (activeUI) {
+      activeUI.closeProfile(resume);
+      return;
+    }
+    updateSnapshot({ profileOpen: false, touchActive: false });
+  },
+  selectProfileTab: (tab: ProfileTab) => {
+    if (activeUI) {
+      activeUI.selectProfileTab(tab);
+      return;
+    }
+    updateSnapshot({ profileTab: tab });
+  },
   openMap: () => activeUI?.openMap(),
   closeMap: (resume = true) => activeUI?.closeMap(resume),
   openReading: (reading: SignalReading) => activeUI?.openReading(reading),
@@ -202,13 +234,30 @@ export const ui = {
 };
 
 export class UI {
-  readonly isTouch =
-    window.matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
   readonly subscribe = subscribe;
   readonly getSnapshot = getSnapshot;
 
+  /**
+   * 指针类型不是常量：开发者工具切到设备模拟、平板插拔键盘、二合一设备拆下屏幕，
+   * 都会让 `pointer: coarse` 和 `maxTouchPoints` 变化。之前只在构造时判断一次，
+   * 关掉设备模拟后触屏控件和触屏视角还会留在页面上，所以改成每次实时计算。
+   */
+  get isTouch() {
+    return this.coarsePointer.matches || navigator.maxTouchPoints > 0;
+  }
+
+  private readonly coarsePointer = window.matchMedia("(pointer: coarse)");
+  private touchFrame = 0;
+
   private readonly handlers: UIHandlers;
   private toastTimer = 0;
+
+  /** 触屏模拟开关会同时改媒体查询和视口尺寸，两边都监听，再延后一帧读最终状态。 */
+  private readonly syncTouchMode = () => {
+    this.applyTouchMode();
+    window.cancelAnimationFrame(this.touchFrame);
+    this.touchFrame = window.requestAnimationFrame(() => this.applyTouchMode());
+  };
 
   get stick() {
     return requiredElement<HTMLDivElement>("stick");
@@ -222,6 +271,20 @@ export class UI {
     this.handlers = handlers;
     activeHandlers = handlers;
     activeUI = this;
+    this.coarsePointer.addEventListener("change", this.syncTouchMode);
+    window.addEventListener("resize", this.syncTouchMode);
+  }
+
+  /** 重新判断指针类型；引擎启动时也调一次，保证首帧状态和浏览器一致。 */
+  refreshTouchMode() {
+    this.syncTouchMode();
+  }
+
+  private applyTouchMode() {
+    const touch = this.isTouch;
+    const active = snapshot.started && touch && !this.anyPanelOpen();
+    if (snapshot.touchActive !== active) updateSnapshot({ touchActive: active });
+    this.handlers.onTouchModeChange?.(touch);
   }
 
   setLoading(percent: number) {
@@ -520,6 +583,9 @@ export class UI {
 
   dispose() {
     window.clearTimeout(this.toastTimer);
+    window.cancelAnimationFrame(this.touchFrame);
+    this.coarsePointer.removeEventListener("change", this.syncTouchMode);
+    window.removeEventListener("resize", this.syncTouchMode);
     if (activeUI !== this) return;
     activeUI = null;
     activeHandlers = null;

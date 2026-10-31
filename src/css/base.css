@@ -1,0 +1,111 @@
+:root {
+  --ink: #07100c;
+  --ink-2: #0b1711;
+  --paper: #f1ecdf;
+  --paper-dim: rgba(241, 236, 223, 0.66);
+  --paper-faint: rgba(241, 236, 223, 0.38);
+  --lime: #d8ff5f;
+  --lime-dim: rgba(216, 255, 95, 0.16);
+  --orange: #ff8a4c;
+  --line: rgba(241, 236, 223, 0.14);
+  --line-strong: rgba(241, 236, 223, 0.26);
+  --panel: rgba(6, 15, 10, 0.72);
+  --panel-solid: rgba(8, 18, 13, 0.95);
+  --sans: "Inter", "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+  --display: "Arial Black", "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mono: "SFMono-Regular", "Cascadia Code", "Roboto Mono", Consolas, "Liberation Mono", monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior: none;
+}
+
+body {
+  cursor: default;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+}
+
+#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  touch-action: none;
+}
+
+#ui {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.vignette {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: radial-gradient(
+    ellipse at 50% 48%,
+    transparent 42%,
+    rgba(3, 8, 6, 0.16) 72%,
+    rgba(3, 8, 6, 0.52) 100%
+  );
+}

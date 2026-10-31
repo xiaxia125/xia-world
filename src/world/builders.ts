@@ -1,9 +1,10 @@
 import * as THREE from "three";
 import { PROFILE } from "../profile";
 import type { SignalCopy } from "../signals";
-import type { AABB, Interactable, Quality, ShelterZone, WeatherType } from "./types";
+import type { AABB, Interactable, Quality } from "./types";
 import {
-  ballTexture, codeTexture, floorSignTexture, islandMapTexture, neonTexture,
+  codeTexture, floorSignTexture, islandMapTexture, neonTexture,
+  photoPrintTexture,
   profileBoardTexture, projectTexture, puddleMaskTexture, radialTexture,
   screenTexture, radioTunerTexture, secretTexture, signalTexture, signTexture,
   whiteboardTexture,
@@ -712,7 +713,6 @@ export class WorldBuilder {
         const x1 = 10;
         const z0 = -31;
         const z1 = -17;
-        const cx = 0;
     
         this.addFloor(x0, x1, z0, z1, 0.12, 0.24, C.woodLight, { edge: false, tag: "studio" });
         this.addBox(0, 0.13, -24, 16.4, 0.03, 10.6, 0x9a6a47, { solid: false, edge: false });
@@ -829,11 +829,17 @@ export class WorldBuilder {
           label: "读取工作方式",
           maxDistance: 4.2,
         });
-        this.registerSignal("monitor", screen, signalTexture("工作方式", [
-          "Vue 2/3 · React · TypeScript",
-          "数据可视化 · 地图 · 三维 · 跨端",
-          "组件封装与接口联调",
-        ], true));
+        this.registerSignal("monitor", screen, signalTexture({
+          title: "工作方式",
+          subtitle: "HOW I WORK / 5 YEARS",
+          rows: [
+            ["01", "复杂业务", "VUE 2/3 · REACT · TS"],
+            ["02", "数据与空间", "ECHARTS · 地图 · WEBGL"],
+            ["03", "跨端交付", "UNIAPP · H5 · 小程序"],
+          ],
+          corner: "STUDIO / WORKSTATION",
+          hint: "> 按 E 回到工作台",
+        }));
     
         // 副屏竖着放，跑的是编辑器和构建日志。
         this.addBox(-6.3, 2.02, -29.02, 0.72, 1.2, 0.12, C.black);
@@ -1132,7 +1138,7 @@ export class WorldBuilder {
             edge: false,
           });
         }
-        const terminal = this.addSign(secretTexture(), 0.84, 0.62, 5.4, 1.33, -37.25);
+        const terminal = this.addSign(secretTexture(), 0.94, 0.68, 5.4, 1.33, -37.25);
         terminal.name = "terminal";
         this.interactables.push({
           id: "terminal",
@@ -1140,11 +1146,17 @@ export class WorldBuilder {
           label: "读取留言",
           maxDistance: 3.4,
         });
-        this.registerSignal("terminal", terminal, signalTexture("工作线索", [
-          "Vite · Webpack · Axios · WebSocket",
-          "组件封装与接口联调",
-          "在真实业务里把复杂信息做清楚。",
-        ], true));
+        this.registerSignal("terminal", terminal, signalTexture({
+          title: "给探索者的留言",
+          subtitle: "BOOKSHELF // 05 — 不在地图上的房间",
+          body: [
+            "你找到了。这块屏幕本来没打算给谁看。",
+            "把复杂的事拆开，再一块块摆回原位。",
+            "没有彩蛋，只有一句实话：多走一步。",
+          ],
+          corner: "SECRET / TERMINAL",
+          hint: "> 按 E 收起留言",
+        }));
     
         // 矮凳：不是办公椅，谁值班谁坐。
         this.addBox(5.4, 0.47, -36.25, 0.5, 0.08, 0.5, C.wood, { solid: false });
@@ -2067,44 +2079,158 @@ export class WorldBuilder {
         this.addFloor(-16.2, -14.0, -24.0, -1.4, 0.06, 0.12, C.path, { edge: false, tag: "lookout-path" });
         this.addFloor(-34.0, -14.0, -23.5, -19.4, 0.06, 0.12, C.path, { edge: false, tag: "lookout-path" });
     
-        const x0 = -39.5;
+        // 日落照片台：比原来略大一圈，铺木板、加串灯、照片墙和坐垫。
+        const x0 = -40.0;
         const x1 = -33.5;
-        const z0 = -28.0;
-        const z1 = -22.0;
+        const z0 = -28.5;
+        const z1 = -21.5;
+        const floorTop = 1.38;
+        const cx = (x0 + x1) / 2;
+        const cz = (z0 + z1) / 2;
+    
+        // 支撑柱：四角 + 两条长边中点。
         for (const [x, z] of [
-          [x0 + 0.4, z0 + 0.4],
-          [x1 - 0.4, z0 + 0.4],
-          [x0 + 0.4, z1 - 0.4],
-          [x1 - 0.4, z1 - 0.4],
+          [x0 + 0.45, z0 + 0.45],
+          [x1 - 0.45, z0 + 0.45],
+          [x0 + 0.45, z1 - 0.45],
+          [x1 - 0.45, z1 - 0.45],
+          [x0 + 0.45, cz],
+          [x1 - 0.45, cz],
         ] as const) {
-          this.addBox(x, 0.65, z, 0.24, 1.3, 0.24, C.woodDark, { tag: "lookout" });
-        }
-        this.addFloor(x0, x1, z0, z1, 1.3, 0.24, C.woodLight, { edge: false, tag: "lookout" });
-    
-        // Railings, with a gap on the east side for the stairs.
-        for (const z of [z0, z1]) {
-          this.addBox((x0 + x1) / 2, 1.92, z, x1 - x0, 0.14, 0.16, C.wood, { solid: false });
-        }
-        this.addBox(x0, 1.92, (z0 + z1) / 2, 0.16, 0.14, z1 - z0, C.wood, { solid: false });
-        for (let x = x0 + 0.6; x <= x1 - 0.6; x += 1.2) {
-          this.addBox(x, 1.92, z0, 0.12, 1.2, 0.12, C.wood, { solid: false });
-          this.addBox(x, 1.92, z1, 0.12, 1.2, 0.12, C.wood, { solid: false });
-        }
-        for (let z = z0 + 0.6; z <= z1 - 0.6; z += 1.2) {
-          this.addBox(x0, 1.92, z, 0.12, 1.2, 0.12, C.wood, { solid: false });
+          this.addBox(x, 0.63, z, 0.26, 1.26, 0.26, C.woodDark, { tag: "lookout" });
         }
     
-        for (let i = 0; i < 3; i += 1) {
-          this.addBox(-33.2 - i * 0.3, 0.22 + i * 0.38, -25.0, 0.9, 0.4 + i * 0.38, 1.6, i % 2 === 0 ? C.stone : C.stoneDark, {
+        // 深色底板 + 交错木板：原来是一整块单色板，看起来像临时搭的台子。
+        this.addFloor(x0, x1, z0, z1, 1.26, 0.24, C.woodDark, { edge: false, tag: "lookout" });
+        const plankTones = [C.woodLight, C.wood, 0xa9704a];
+        for (let i = 0; i < 12; i += 1) {
+          this.addBox(cx, floorTop - 0.06, z0 + 0.34 + i * 0.578, x1 - x0 - 0.12, 0.12, 0.5, plankTones[i % 3], {
+            edge: false,
+            tag: "lookout-planks",
+          });
+        }
+        for (const z of [z0 + 0.05, z1 - 0.05]) {
+          this.addBox(cx, floorTop + 0.02, z, x1 - x0, 0.06, 0.1, C.woodDark, { solid: false, edge: false });
+        }
+        for (const x of [x0 + 0.05, x1 - 0.05]) {
+          this.addBox(x, floorTop + 0.02, cz, 0.1, 0.06, z1 - z0, C.woodDark, { solid: false, edge: false });
+        }
+    
+        // 栏杆：扶手 + 中横杆 + 密一点的立柱。原来竖杆高出扶手一截，像没装完。
+        const railY = 2.56;
+        const midY = 1.98;
+        const postY = 1.97;
+        const railHeight = 1.18;
+        for (const z of [z0 + 0.08, z1 - 0.08]) {
+          this.addBox(cx, railY, z, x1 - x0 - 0.1, 0.12, 0.14, C.wood, { solid: false });
+          this.addBox(cx, midY, z, x1 - x0 - 0.1, 0.07, 0.1, C.wood, { solid: false });
+        }
+        this.addBox(x0 + 0.08, railY, cz, 0.14, 0.12, z1 - z0 - 0.1, C.wood, { solid: false });
+        this.addBox(x0 + 0.08, midY, cz, 0.1, 0.07, z1 - z0 - 0.1, C.wood, { solid: false });
+    
+        // 东侧留出楼梯口，两边各留一小段栏杆把入口收住。
+        for (const [a, b] of [[z0 + 0.08, -26.35], [-23.65, z1 - 0.08]] as const) {
+          this.addBox(x1 - 0.08, railY, (a + b) / 2, 0.14, 0.12, b - a, C.wood, { solid: false });
+          this.addBox(x1 - 0.08, midY, (a + b) / 2, 0.1, 0.07, b - a, C.wood, { solid: false });
+        }
+    
+        for (const [x, z] of [
+          [x0 + 0.08, z0 + 0.08],
+          [x1 - 0.08, z0 + 0.08],
+          [x0 + 0.08, z1 - 0.08],
+          [x1 - 0.08, z1 - 0.08],
+        ] as const) {
+          this.addBox(x, postY, z, 0.17, railHeight, 0.17, C.wood, { solid: false });
+          this.addBox(x, railY + 0.1, z, 0.24, 0.08, 0.24, C.woodDark, { solid: false, edge: false });
+        }
+        for (let x = x0 + 0.65; x <= x1 - 0.65; x += 1.12) {
+          this.addBox(x, postY, z0 + 0.08, 0.08, railHeight, 0.08, C.wood, { solid: false });
+          this.addBox(x, postY, z1 - 0.08, 0.08, railHeight, 0.08, C.wood, { solid: false });
+        }
+        for (let z = z0 + 0.65; z <= z1 - 0.65; z += 1.12) {
+          this.addBox(x0 + 0.08, postY, z, 0.08, railHeight, 0.08, C.wood, { solid: false });
+        }
+        for (const z of [-26.35, -23.65]) {
+          this.addBox(x1 - 0.08, postY, z, 0.1, railHeight, 0.1, C.wood, { solid: false });
+        }
+    
+        // 四步石阶：最上一级和台面齐平，不再比地板高出一截。
+        for (let i = 0; i < 4; i += 1) {
+          const top = 0.46 + i * 0.306;
+          this.addBox(-33.2 - i * 0.32, top / 2, -25.0, 0.88, top, 1.6, i % 2 === 0 ? C.stone : C.stoneDark, {
             tag: "lookout",
           });
         }
     
-        this.addBench(-38.6, 1.3, -25.0, -1, "x");
+        // 长椅 + 坐垫、靠枕、叠好的毯子。
+        this.addBench(-39.05, floorTop, -25.0, -1, "x");
+        this.addBox(-39.05, floorTop + 0.64, -25.0, 0.68, 0.08, 2.2, 0x2f5d54, { solid: false, edge: false });
+        this.addBox(-39.24, floorTop + 0.84, -25.78, 0.16, 0.42, 0.52, 0xe8e0cc, { solid: false });
+        this.addBox(-39.24, floorTop + 0.84, -24.22, 0.16, 0.42, 0.52, C.flowerA, { solid: false });
+        this.addBox(-39.02, floorTop + 0.72, -25.9, 0.58, 0.14, 0.6, 0x9a5a46, { solid: false, edge: false });
+        this.addBox(-39.02, floorTop + 0.8, -25.9, 0.59, 0.04, 0.61, 0xd8c7a6, { solid: false, edge: false });
     
-        // Camera tripod for photo mode.
+        // 小边桌：保温杯、速写本，给拍照的人放东西。
+        this.addBox(-39.0, floorTop + 0.29, -22.55, 0.72, 0.58, 0.62, C.woodDark, { tag: "lookout-table" });
+        this.addBox(-39.0, floorTop + 0.61, -22.55, 0.8, 0.06, 0.7, C.woodLight, { solid: false, edge: false });
+        this.addBox(-39.14, floorTop + 0.82, -22.62, 0.14, 0.3, 0.14, C.metalLight, { solid: false });
+        this.addBox(-39.14, floorTop + 0.99, -22.62, 0.16, 0.05, 0.16, C.lime, { solid: false, edge: false });
+        this.addBox(-38.8, floorTop + 0.67, -22.5, 0.34, 0.05, 0.26, C.flowerB, { solid: false, edge: false });
+        this.addBox(-38.8, floorTop + 0.7, -22.5, 0.3, 0.03, 0.22, C.white, { solid: false, edge: false });
+    
+        // 棉麻地毯：压住木板的单调，也给相机三脚架一个中心。
+        this.addBox(-36.6, floorTop + 0.012, -24.3, 2.4, 0.02, 1.8, 0x33564d, { solid: false, edge: false });
+        this.addBox(-36.6, floorTop + 0.022, -24.3, 2.2, 0.01, 1.6, 0x3d665b, { solid: false, edge: false });
+        for (const z of [-25.0, -23.6]) {
+          this.addBox(-36.6, floorTop + 0.03, z, 2.24, 0.01, 0.05, 0xd8c7a6, { solid: false, edge: false });
+        }
+    
+        // 两侧花箱：把楼梯口和休息区区分开。
+        for (const z of [-27.45, -22.55]) {
+          this.addBox(-34.2, floorTop + 0.28, z, 0.86, 0.56, 0.86, C.woodDark, { tag: "lookout-planter" });
+          this.addBox(-34.2, floorTop + 0.58, z, 0.7, 0.06, 0.7, C.soil, { solid: false, edge: false });
+          for (let i = 0; i < 3; i += 1) {
+            const ox = (i - 1) * 0.22;
+            this.addBox(-34.2 + ox, floorTop + 0.85, z, 0.06, 0.48, 0.06, C.leaf, { solid: false, edge: false });
+            this.addBox(-34.2 + ox, floorTop + 1.12, z, 0.16, 0.12, 0.16, i % 2 === 0 ? C.flowerA : C.flowerB, {
+              solid: false,
+              edge: false,
+            });
+          }
+        }
+    
+        // 两盏落地灯：夜里从岛西侧看过来，这是唯一亮着的暖光。
+        for (const z of [-27.7, -22.3]) {
+          this.addBox(-39.55, floorTop + 0.18, z, 0.26, 0.36, 0.26, C.woodDark, { solid: false });
+          this.addBox(-39.55, floorTop + 0.48, z, 0.22, 0.24, 0.22, 0xffd9a0, { glow: true, solid: false });
+          this.addBox(-39.55, floorTop + 0.64, z, 0.3, 0.06, 0.3, C.woodDark, { solid: false, edge: false });
+        }
+    
+        // 西侧串灯：沿着扶手挂一排小灯泡，黄昏后能看见一条暖线。
+        this.addBox(x0 + 0.1, railY - 0.1, cz, 0.02, 0.02, z1 - z0 - 0.8, C.metal, { solid: false, edge: false });
+        for (let z = z0 + 0.5; z <= z1 - 0.4; z += 0.55) {
+          this.addBox(x0 + 0.1, railY - 0.16, z, 0.12, 0.12, 0.12, 0xffd9a0, { glow: true, solid: false, edge: false });
+        }
+    
+        // 北侧栏杆上的照片墙：三张在这里拍下的落日。
+        const printZ = z0 + 0.16;
+        const prints = [
+          photoPrintTexture("01", "18:24 WEST", ["#e8a06b", "#ffd98a", "#43564b"]),
+          photoPrintTexture("02", "BLUE HOUR", ["#6d86a8", "#f2d6a0", "#34424c"]),
+          photoPrintTexture("03", "AFTER RAIN", ["#8f9a96", "#d8ff5f", "#2f4a3c"]),
+        ];
+        this.addBox(cx, railY - 0.08, printZ, 4.0, 0.02, 0.02, C.metal, { solid: false, edge: false });
+        prints.forEach((texture, i) => {
+          const x = -38.4 + i * 1.7;
+          this.addBox(x, 2.24, printZ + 0.03, 0.74, 0.9, 0.03, C.woodDark, { solid: false, edge: false });
+          this.addSign(texture, 0.68, 0.84, x, 2.24, printZ + 0.055);
+          this.addBox(x, 2.68, printZ + 0.045, 0.04, 0.12, 0.04, C.metal, { solid: false, edge: false });
+        });
+    
+        // Camera tripod for photo mode：镜头朝西，对着日落。
         const tripod = new THREE.Group();
-        tripod.position.set(-35.0, 1.3, -25.2);
+        tripod.position.set(-35.9, floorTop, -26.0);
+        tripod.rotation.y = Math.PI;
         tripod.name = "photo-tripod";
         const legMat = new THREE.MeshStandardMaterial({ color: C.metal, roughness: 0.6 });
         for (let i = 0; i < 3; i += 1) {
@@ -2143,14 +2269,28 @@ export class WorldBuilder {
         });
     
         this.addSign(
-          signTexture("LOOKOUT", "PHOTO POINT / PRESS E", "#e5c07b"),
-          2.2,
-          0.55,
-          -36.5,
+          signTexture("LOOKOUT", "SUNSET 18:00 / PHOTO POINT", "#e5c07b"),
+          2.4,
+          0.6,
+          -36.8,
           2.2,
           z1 + 0.08,
           0,
         );
+    
+        // 台子周围的草与野花，别让木台直接插在空草坪上。
+        for (const [x, z] of [
+          [-41.2, -29.2],
+          [-41.4, -20.9],
+          [-32.5, -29.5],
+          [-42.5, -25.2],
+          [-32.6, -27.9],
+          [-34.8, -29.7],
+        ] as const) {
+          this.addBox(x, 0.36, z, 0.1, 0.72, 0.1, C.leaf, { solid: false, edge: false });
+          this.addBox(x + 0.14, 0.26, z + 0.1, 0.09, 0.52, 0.09, C.leafLight, { solid: false, edge: false });
+          this.addBox(x - 0.04, 0.74, z, 0.16, 0.12, 0.16, C.flowerB, { solid: false, edge: false });
+        }
       }
   
       buildWeatherProps() {
@@ -2371,11 +2511,21 @@ export class WorldBuilder {
         this.addBox(0, 1.6, 49.2, 100, 3.2, 2.2, C.leafDark, { edge: false });
         this.addBox(0, 1.6, -49.2, 100, 3.2, 2.2, C.leafDark, { edge: false });
         this.addBox(49.2, 1.6, 0, 2.2, 3.2, 100, C.leafDark, { edge: false });
-        this.addBox(-49.2, 1.6, 0, 2.2, 3.2, 100, C.leafDark, { edge: false });
+        // 西侧：观景台正对的那段树篱改成低矮石栏，让日落和远山真正露出来；
+        // 石栏 1.65 高，仍高于玩家 1.28 的跳跃高度，边界不会被跳出去。
+        this.addBox(-49.2, 1.6, -44, 2.2, 3.2, 12, C.leafDark, { edge: false });
+        this.addBox(-49.2, 1.6, 18, 2.2, 3.2, 64, C.leafDark, { edge: false });
+        this.addBox(-49.2, 0.78, -26, 1.1, 1.56, 24, C.stone, { edge: false, tag: "lookout-parapet" });
+        this.addBox(-49.2, 1.6, -26, 1.34, 0.1, 24.2, C.stoneDark, { edge: false, tag: "lookout-parapet" });
+        for (const z of [-38, -14]) {
+          this.addBox(-49.2, 1.7, z, 1.5, 3.4, 1.5, C.stoneDark, { edge: false, tag: "lookout-parapet" });
+          this.addBox(-49.2, 3.45, z, 1.7, 0.14, 1.7, C.stone, { edge: false, tag: "lookout-parapet" });
+        }
     
-        // distant hills, outside the hedge
+        // distant hills, outside the hedge：西侧改成两层低矮远山，不再是一堵近处的绿墙。
         const hills: [number, number, number, number, number, number][] = [
-          [-62, 3, -32, 34, 8, 30],
+          [-78, 1.6, -30, 48, 4.0, 44],
+          [-112, 1.0, -52, 70, 6.0, 70],
           [62, 4, -28, 36, 10, 34],
           [-58, 2, 34, 30, 6, 26],
           [58, 3, 34, 32, 8, 28],

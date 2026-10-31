@@ -1,6 +1,5 @@
 import * as THREE from "three";
 import WebGL from "three/addons/capabilities/WebGL.js";
-import "./style.css";
 import { AudioSystem } from "./audio";
 import { Environment } from "./environment";
 import { Player } from "./player";
@@ -231,7 +230,18 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     },
     onExitPiano: () => exitPiano(),
     onResume: () => resumeGame(),
+    onTouchModeChange: (touch) => {
+      player.touchMode = touch;
+      if (touch) {
+        // 切到触屏后指针锁定没有意义，交回触屏视角。
+        player.setJoystick(0, 0);
+        if (document.pointerLockElement) document.exitPointerLock();
+      }
+    },
   });
+
+  // 构造 UI 之后再对一次表：isTouch 可能和 boot 时不同（设备模拟在加载后才开/关）。
+  ui.refreshTouchMode();
 
   ui.setSensitivity(sensitivity);
   ui.setVolume(volume);
@@ -290,7 +300,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   function enterWorld() {
     if (state.started) return;
     state.started = true;
-    if (!isTouch) player.requestLock();
+    if (!ui.isTouch) player.requestLock();
     void audio.start().then(() => {
       audio.setVolume(muted ? 0 : volume);
       audio.setMusic(musicOn);
@@ -466,7 +476,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   function resumeGame(requestLock = true) {
     if (!state.started || ui.isBlocking) return;
-    if (isTouch) {
+    if (ui.isTouch) {
       player.enabled = true;
       ui.hidePause();
       ui.setTouchActive(true);
@@ -906,7 +916,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   player.onStep = () => audio.footstep();
 
   player.onLockChange = (locked) => {
-    if (isTouch) return;
+    if (ui.isTouch) return;
     if (!locked && state.started && !ui.isBlocking) {
       player.enabled = false;
       ui.showPause(true);
@@ -919,9 +929,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   };
 
   // ------------------------------------------------------------ touch input
+  // 监听常驻挂载；是否生效由运行时的 ui.isTouch 决定，这样在开发者工具里
+  // 打开/关闭设备模拟、或者二合一设备插拔触屏，都不需要刷新页面。
+  // 桌面端不会命中：控件层在没有触屏时是 display:none + inert。
 
-  let releaseTouchInput: (() => void) | undefined;
-  if (isTouch) {
+  {
     const stick = ui.stick;
     const knob = ui.stickKnob;
     let stickPointer = -1;
@@ -945,7 +957,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     };
 
     stick.addEventListener("pointerdown", (event) => {
-      if (!state.started || ui.isBlocking) return;
+      if (!ui.isTouch || !state.started || ui.isBlocking) return;
       stickPointer = event.pointerId;
       stick.setPointerCapture(event.pointerId);
       setStick(event);
@@ -964,7 +976,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     stick.addEventListener("pointercancel", releaseStick, { signal: events.signal });
 
     canvas.addEventListener("pointerdown", (event) => {
-      if (!state.started || ui.isBlocking) return;
+      // 鼠标视角走 pointer lock，不走这条拖拽路径。
+      if (!ui.isTouch || !state.started || ui.isBlocking) return;
       if (event.clientX < window.innerWidth * 0.38) return;
       lookPointer = event.pointerId;
       lookX = event.clientX;
@@ -986,10 +999,12 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     canvas.addEventListener("pointercancel", releaseLook, { signal: events.signal });
 
     document.getElementById("touch-jump")?.addEventListener("pointerdown", (event) => {
+      if (!ui.isTouch) return;
       event.preventDefault();
       player.queueJump();
     }, { signal: events.signal });
     document.getElementById("touch-interact")?.addEventListener("pointerdown", (event) => {
+      if (!ui.isTouch) return;
       event.preventDefault();
       interact();
     }, { signal: events.signal });
@@ -1044,11 +1059,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       world.setNight(environment.night);
       audio.setRain(rainLevel());
       renderer.render(scene, camera);
-      if (!firstFrameRendered) {
-        firstFrameRendered = true;
-        window.clearInterval(loadTimer);
-        ui.setLoading(100);
-      }
+      if (!readyAt) readyAt = performance.now();
+      updateLoading();
       return;
     }
 
@@ -1107,16 +1119,28 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   }, { signal: events.signal });
   window.addEventListener("beforeunload", () => save(), { signal: events.signal });
 
-  // The world is assembled synchronously, so this progress pass exists only to
-  // give the start screen something readable to show. It stops at 90% and the
-  // first rendered frame below is what actually completes it — otherwise the
-  // bar would claim "ready" while nothing had been drawn yet.
-  let loadValue = 0;
-  let firstFrameRendered = false;
-  const loadTimer = window.setInterval(() => {
-    loadValue = Math.min(90, loadValue + 7 + Math.random() * 9);
-    ui.setLoading(loadValue);
-  }, 55);
+  // 世界是同步拼出来的，所以进度条只是首屏的一个节奏：按固定时长从 0 走到 100，
+  // 但「就绪」必须等第一帧真的画出来，否则会出现进度满了画面还是黑的。
+  // 之前用 setInterval 每 55ms 加一次，世界几十毫秒就搭完，数字直接从 00 跳到 100。
+  const LOAD_DURATION = 1100;
+  const loadStart = performance.now();
+  let readyAt = 0;
+  let loadingShown = -1;
+
+  function updateLoading() {
+    const now = performance.now();
+    // 第一帧来得晚就把总时长一起拉长，最后一段不会猛地跳过去。
+    const total = Math.max(LOAD_DURATION, readyAt ? readyAt - loadStart + 320 : LOAD_DURATION);
+    let percent = ((now - loadStart) / total) * 100;
+    // 第一帧没画出来之前最多 96%，开始按钮也保持禁用。
+    if (!readyAt) percent = Math.min(percent, 96);
+    percent = Math.max(0, Math.min(100, percent));
+    const value = percent >= 99.5 ? 100 : Math.floor(percent);
+    if (value === loadingShown) return;
+    loadingShown = value;
+    ui.setLoading(value);
+  }
+
   animate();
 
   const debugHandle = {
@@ -1146,7 +1170,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   return () => {
     if (disposed) return;
     disposed = true;
-    window.clearInterval(loadTimer);
     window.cancelAnimationFrame(frameId);
     frameId = 0;
     pendingTimeouts.forEach((timeout) => window.clearTimeout(timeout));

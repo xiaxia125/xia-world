@@ -1,33 +1,46 @@
 import * as THREE from "three";
-import { PROFILE } from "../profile";
 import type { SignalCopy } from "../signals";
 import type { AABB, Interactable, Quality, ShelterZone, WeatherType } from "./types";
 /**
  * Builds the walkable Three.js scene and exposes its colliders and interactable surfaces.
  * React owns the surrounding controls; this module keeps world state and rendering-side resources together.
  */
-import {
-  ballTexture,
-  codeTexture,
-  floorSignTexture,
-  islandMapTexture,
-  neonTexture,
-  profileBoardTexture,
-  projectTexture,
-  puddleMaskTexture,
-  radialTexture,
-  screenTexture,
-  radioTunerTexture,
-  secretTexture,
-  signalTexture,
-  signTexture,
-  whiteboardTexture,
-} from "./textures";
+import { screenTexture } from "./textures";
 import { applyMixins, BoxSpec, C, WorldBuilder } from "./builders";
 import { CAT_SLIDE_BIASES } from "./creatures";
 import { WorldCreatures } from "./creatures";
 import { CONSTELLATION_STARS } from "./signals";
 import { WorldSignals } from "./signals";
+
+/**
+ * 鸟的朝向/俯仰辅助。
+ *
+ * 之前直接用 `atan2(-vz, vx)` 每帧写 yaw。鸟在降落接近、急转或离场时水平速度
+ * 会掉到 0 附近，atan2 的正负号来回跳，整只鸟就会突然掉头 180°，看起来像
+ * 头和尾巴一直在换位置。这里加一个最小水平速度门槛，并让朝向按最短弧平滑转，
+ * 速度很小的时候保持上一帧的朝向。
+ */
+interface FlyingBird {
+  group: THREE.Group;
+  heading: number;
+}
+
+function steerBird(bird: FlyingBird, vx: number, vz: number, dt: number) {
+  const horiz = Math.hypot(vx, vz);
+  if (horiz > 0.45) {
+    const target = Math.atan2(-vz, vx);
+    const delta = Math.atan2(Math.sin(target - bird.heading), Math.cos(target - bird.heading));
+    bird.heading += delta * Math.min(1, dt * 5);
+    bird.group.rotation.y = bird.heading;
+  }
+  return horiz;
+}
+
+function pitchBird(bird: FlyingBird, vy: number, horiz: number, dt: number) {
+  // 俯仰只做小幅示意；速度很小时回正，避免鸟头直上直下。
+  const target = horiz > 0.5 ? THREE.MathUtils.clamp(Math.atan2(vy, horiz), -0.35, 0.35) : 0;
+  bird.group.rotation.z += (target - bird.group.rotation.z) * Math.min(1, dt * 5);
+}
 
 /**
  * 望远镜探索星座：6 颗星，一颗对应一个分区。盖过该分区的访客印章才点亮，
@@ -296,6 +309,8 @@ export class VoxelWorld {
     perchSpot: [number, number, number] | null;
     /** 是否正在离场：朝远处飞去，飞出视野后才真正消失，不会原地消失。 */
     leaving: boolean;
+    /** 平滑后的朝向（弧度）。水平速度接近 0 时仍保持上一次朝向，避免头尾来回翻转。 */
+    heading: number;
   }> = [];
   /** 鸟群数量随机刷新的计时器：到点随机增减一只。 */
   birdSpawnTimer = 2;
@@ -815,7 +830,6 @@ export class VoxelWorld {
           cat.rotation.y,
           this.catGroundY,
         );
-        let moveAng = baseAng;
         let nextX = cat.position.x;
         let nextZ = cat.position.z;
         let nextYaw = cat.rotation.y;
@@ -836,7 +850,6 @@ export class VoxelWorld {
             nextX = nx;
             nextZ = nz;
             nextYaw = turned;
-            moveAng = ang;
             found = true;
             break;
           }
@@ -922,11 +935,13 @@ export class VoxelWorld {
         const ldz = bird.target.z - bird.pos.z;
         const desired = new THREE.Vector3(ldx, 0, ldz).normalize().multiplyScalar(bird.speed);
         bird.vel.lerp(desired, Math.min(1, dt * 1.5));
-        bird.vel.y = Math.sin(elapsed * 0.8 + bird.flapPhase) * 0.8;
+        // 离场时缓慢爬升，不再用大振幅正弦让鸟一路上下颠。
+        const climb = THREE.MathUtils.clamp((bird.target.y - bird.pos.y) * 0.35, -0.5, 0.8);
+        bird.vel.y = THREE.MathUtils.lerp(bird.vel.y, climb, Math.min(1, dt * 2));
         bird.pos.addScaledVector(bird.vel, dt);
         bird.group.position.copy(bird.pos);
-        const horiz = Math.hypot(bird.vel.x, bird.vel.z);
-        if (horiz > 0.05) bird.group.rotation.y = Math.atan2(-bird.vel.z, bird.vel.x);
+        const horiz = steerBird(bird, bird.vel.x, bird.vel.z, dt);
+        pitchBird(bird, bird.vel.y, horiz, dt);
         bird.leftWing.rotation.x = Math.sin(elapsed * 12 + bird.flapPhase) * 0.8;
         bird.rightWing.rotation.x = -Math.sin(elapsed * 12 + bird.flapPhase) * 0.8;
         continue;
@@ -975,8 +990,8 @@ export class VoxelWorld {
           bird.vel.lerp(desired, Math.min(1, dt * 1.2));
           bird.pos.addScaledVector(bird.vel, dt);
           bird.group.position.copy(bird.pos);
-          const horiz = Math.hypot(bird.vel.x, bird.vel.z);
-          if (horiz > 0.05) bird.group.rotation.y = Math.atan2(-bird.vel.z, bird.vel.x);
+          const horiz = steerBird(bird, bird.vel.x, bird.vel.z, dt);
+          pitchBird(bird, bird.vel.y, horiz, dt);
           bird.leftWing.rotation.x = Math.sin(elapsed * 8 + bird.flapPhase) * 0.4;
           bird.rightWing.rotation.x = -Math.sin(elapsed * 8 + bird.flapPhase) * 0.4;
           continue;
@@ -985,8 +1000,11 @@ export class VoxelWorld {
         const landY = bird.perchSpot[1] + 0.32;
         bird.pos.y = THREE.MathUtils.lerp(bird.pos.y, landY, Math.min(1, dt * 2));
         bird.group.position.copy(bird.pos);
-        // 固定朝向，不再随机旋转（避免看着像螺旋下坠）。
-        bird.group.rotation.y = 0;
+        // 落地时缓慢回正朝向，不突然旋转 180°（避免看着像螺旋下坠）。
+        const straighten = Math.atan2(Math.sin(-bird.heading), Math.cos(-bird.heading));
+        bird.heading += straighten * Math.min(1, dt * 4);
+        bird.group.rotation.y = bird.heading;
+        bird.group.rotation.z += (0 - bird.group.rotation.z) * Math.min(1, dt * 6);
         if (Math.abs(bird.pos.y - landY) < 0.15) {
           bird.pos.set(bird.perchSpot[0], landY, bird.perchSpot[2]);
           bird.group.position.copy(bird.pos);
@@ -1016,9 +1034,12 @@ export class VoxelWorld {
         const desired = new THREE.Vector3(dx, 0, dz).normalize().multiplyScalar(bird.speed);
         bird.vel.lerp(desired, Math.min(1, dt * 1.1));
       }
-      // 轻微上下起伏；低于建筑/树顶则强制抬升，避免穿过模型。
-      bird.vel.y = Math.sin(elapsed * 0.8 + bird.flapPhase) * 0.8;
-      if (bird.pos.y < 10) bird.vel.y = 2.2;
+      // 朝目标高度缓慢收敛，只保留很小的起伏；目标是 10~16 米，不会被拉去反复爬升下坠。
+      const climb = THREE.MathUtils.clamp((bird.target.y - bird.pos.y) * 0.8, -1.3, 1.3);
+      const bob = Math.sin(elapsed * 0.55 + bird.flapPhase) * 0.22;
+      bird.vel.y = THREE.MathUtils.lerp(bird.vel.y, climb + bob, Math.min(1, dt * 2.2));
+      if (bird.pos.y < 10) bird.vel.y = Math.max(bird.vel.y, 1.8);
+      if (bird.pos.y > 17) bird.vel.y = Math.min(bird.vel.y, -1.0);
       bird.pos.addScaledVector(bird.vel, dt);
       // 越界就拉回中心（同时压住高度上限，不让鸟飞进易显黑的深空）
       if (Math.abs(bird.pos.x) > 58 || Math.abs(bird.pos.z) > 58 || bird.pos.y > 18) {
@@ -1026,14 +1047,9 @@ export class VoxelWorld {
         bird.turnTimer = 0;
       }
       bird.group.position.copy(bird.pos);
-      // 身体朝飞行方向：本地 +X（头部）对准水平速度
-      const hx = bird.vel.x;
-      const hz = bird.vel.z;
-      const horiz = Math.hypot(hx, hz);
-      if (horiz > 0.05) {
-        bird.group.rotation.y = Math.atan2(-hz, hx);
-        bird.group.rotation.z = Math.atan2(bird.vel.y, horiz);
-      }
+      // 身体朝飞行方向：本地 +X（头部）对准水平速度；速度很小时保持上一帧朝向。
+      const horiz = steerBird(bird, bird.vel.x, bird.vel.z, dt);
+      pitchBird(bird, bird.vel.y, horiz, dt);
       // 扇翅
       if (!this.reducedMotion) {
         const flap = Math.sin(elapsed * (9 + bird.speed * 4) + bird.flapPhase) * 0.9;

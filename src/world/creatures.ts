@@ -283,6 +283,7 @@ export class WorldCreatures {
         perchTimer: 0,
         perchSpot: null,
         leaving: false,
+        heading: 0,
       });
     }
     // 开局随机激活 2~4 只。
@@ -302,6 +303,8 @@ export class WorldCreatures {
     const speed = 2.2 + Math.random() * 3;
     bird.pos.set(x, y, z);
     bird.vel.set(Math.cos(angle), 0, Math.sin(angle)).multiplyScalar(speed);
+    bird.heading = Math.atan2(-Math.sin(angle), Math.cos(angle));
+    bird.group.rotation.set(0, bird.heading, 0);
     bird.target.set(
       (Math.random() * 2 - 1) * 55,
       10 + Math.random() * 6,
@@ -746,7 +749,8 @@ export class WorldCreatures {
 
   updateConfetti(dt: number) {
     if (!this.confetti) return;
-    const { points, velocities, life } = this.confetti;
+    const { points, velocities } = this.confetti;
+
     const pos = points.geometry.getAttribute("position") as THREE.BufferAttribute;
     const arr = pos.array as Float32Array;
     for (let i = 0; i < pos.count; i += 1) {

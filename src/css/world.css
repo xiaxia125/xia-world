@@ -1,0 +1,759 @@
+/* ------------------------------------------------------------------ hud */
+
+.hud {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  opacity: 1;
+  pointer-events: none;
+  transition: opacity 0.5s var(--ease);
+}
+
+.hud.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.hud.is-hidden .hud-top,
+.hud.is-hidden .hud-bottom,
+.hud.is-hidden .pause {
+  pointer-events: none;
+}
+
+.hud-top {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(14px, 2.2vw, 24px);
+}
+
+.hud-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 34px;
+  color: rgba(241, 236, 223, 0.82);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+}
+
+.hud-logo {
+  position: relative;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(216, 255, 95, 0.7);
+  background: rgba(216, 255, 95, 0.08);
+  box-shadow: inset -6px -6px 0 rgba(216, 255, 95, 0.12);
+}
+
+.hud-logo::after {
+  content: "";
+  position: absolute;
+  inset: 5px;
+  background: var(--lime);
+  opacity: 0.8;
+}
+
+.hud-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--paper-dim);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.chip-button {
+  transition: border-color 0.2s, color 0.2s;
+}
+
+.chip-button:hover {
+  border-color: var(--line-strong);
+  color: var(--paper);
+}
+
+.profile-chip {
+  gap: 7px;
+  border-color: rgba(216, 255, 95, 0.34);
+  background: rgba(216, 255, 95, 0.08);
+  color: var(--lime);
+}
+
+.profile-chip > span:first-child {
+  display: inline-grid;
+  min-width: 21px;
+  height: 17px;
+  place-items: center;
+  border: 1px solid rgba(216, 255, 95, 0.36);
+  border-radius: 3px;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.profile-chip:hover {
+  border-color: rgba(216, 255, 95, 0.65);
+  background: rgba(216, 255, 95, 0.14);
+  color: var(--paper);
+}
+
+.chip .dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--paper-faint);
+}
+
+.chip .dot.live {
+  background: var(--lime);
+  box-shadow: 0 0 10px rgba(216, 255, 95, 0.7);
+}
+
+.clock {
+  gap: 10px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.clock #clock {
+  color: var(--paper);
+  font-variant-numeric: tabular-nums;
+}
+
+.clock #day-phase {
+  color: var(--paper-faint);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--panel);
+  color: var(--paper-dim);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: color 0.2s, border-color 0.2s, background 0.2s;
+}
+
+.icon-button:hover {
+  border-color: var(--line-strong);
+  color: var(--paper);
+}
+
+.crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(241, 236, 223, 0.36);
+  border-radius: 50%;
+  transition: border-color 0.2s, transform 0.2s;
+}
+
+.crosshair span {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 3px;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background: var(--lime);
+}
+
+.crosshair.is-active {
+  border-color: var(--lime);
+  transform: translate(-50%, -50%) scale(1.25);
+}
+
+.prompt {
+  position: absolute;
+  left: 50%;
+  bottom: clamp(96px, 14vh, 140px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 16px 9px 10px;
+  border: 1px solid rgba(216, 255, 95, 0.22);
+  border-radius: 999px;
+  background: rgba(6, 15, 10, 0.82);
+  color: var(--paper);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  transition: opacity 0.18s, transform 0.18s;
+}
+
+.prompt kbd {
+  border-color: rgba(216, 255, 95, 0.4);
+  color: var(--lime);
+}
+
+.prompt.is-hidden {
+  opacity: 0;
+  transform: translate(-50%, 8px);
+}
+
+.toast {
+  position: absolute;
+  top: clamp(70px, 10vh, 96px);
+  left: 50%;
+  max-width: min(420px, calc(100vw - 40px));
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--lime);
+  border-radius: 4px;
+  background: rgba(6, 15, 10, 0.9);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  letter-spacing: 0.03em;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -8px);
+  transition: opacity 0.25s, transform 0.25s var(--ease);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.toast.is-on {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.hud-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  padding: clamp(14px, 2.2vw, 24px);
+}
+
+.hud-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: var(--paper-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+.hud-hint span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hud-hint kbd {
+  height: 18px;
+  min-width: 18px;
+  padding: 0 5px;
+  font-size: 10px;
+}
+
+.hud-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-badges .chip {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 10px;
+}
+
+.pause {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 24px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(6, 15, 10, 0.9);
+  color: var(--paper);
+  text-align: center;
+  transform: translate(-50%, -50%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.pause b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pause span {
+  color: var(--paper-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+.is-hidden {
+  pointer-events: none;
+}
+
+.pause.is-hidden {
+  display: none;
+}
+
+
+/* --------------------------------------------------------------- compass */
+
+.compass-chip {
+  gap: 8px;
+  padding-left: 8px;
+}
+
+.compass-rose {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid rgba(216, 255, 95, 0.32);
+  border-radius: 50%;
+  background: rgba(216, 255, 95, 0.06);
+  transition: transform 0.18s linear;
+}
+
+.compass-rose i {
+  width: 0;
+  height: 0;
+  margin-top: -3px;
+  border-right: 3px solid transparent;
+  border-bottom: 7px solid var(--lime);
+  border-left: 3px solid transparent;
+}
+
+.compass-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1;
+}
+
+.compass-text b {
+  color: var(--paper);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+}
+
+.compass-text small {
+  color: var(--paper-faint);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+
+/* ----------------------------------------------------------------- touch */
+
+.touch {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: none;
+  pointer-events: none;
+}
+
+.touch.is-active {
+  display: block;
+}
+
+.stick {
+  position: absolute;
+  left: max(22px, env(safe-area-inset-left));
+  bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+  width: 112px;
+  height: 112px;
+  border: 1px solid rgba(241, 236, 223, 0.2);
+  border-radius: 50%;
+  background: rgba(6, 15, 10, 0.28);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.stick::before,
+.stick::after {
+  content: "";
+  position: absolute;
+  background: rgba(241, 236, 223, 0.12);
+}
+
+.stick::before {
+  top: 50%;
+  left: 18px;
+  right: 18px;
+  height: 1px;
+}
+
+.stick::after {
+  top: 18px;
+  bottom: 18px;
+  left: 50%;
+  width: 1px;
+}
+
+.stick-knob,
+#stick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: rgba(216, 255, 95, 0.85);
+  box-shadow: 0 0 24px rgba(216, 255, 95, 0.28);
+  transform: translate(-50%, -50%);
+  transition: transform 0.08s linear;
+}
+
+.touch-actions {
+  position: absolute;
+  right: max(20px, env(safe-area-inset-right));
+  bottom: max(26px, calc(env(safe-area-inset-bottom) + 14px));
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.touch-button {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border: 1px solid rgba(241, 236, 223, 0.25);
+  border-radius: 50%;
+  background: rgba(6, 15, 10, 0.5);
+  color: var(--paper);
+  font-family: var(--mono);
+  font-size: 18px;
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.touch-button:active,
+.touch-button.is-down {
+  background: var(--lime);
+  color: #101a08;
+}
+
+.touch-interact {
+  width: 54px;
+  height: 54px;
+  font-size: 13px;
+  border-color: rgba(216, 255, 95, 0.45);
+  color: var(--lime);
+}
+
+.touch-small {
+  width: 44px;
+  height: 44px;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+
+/* ------------------------------------------------------------- telescope */
+/*
+ * 望远镜目镜：取景时盖一层圆形暗角，中央完全通透不挡视野，
+ * 信号内容以 DOM 文字贴在左下角——3D 贴图在 24° 视野下会糊，这里不会。
+ */
+.scope {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  animation: scope-in 260ms var(--ease) both;
+}
+
+@keyframes scope-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 圆形暗角：中心透明，边缘压暗，模拟目镜视场边界 */
+.scope-mask {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    circle at 50% 50%,
+    transparent 0,
+    transparent 30vmin,
+    rgba(3, 8, 5, 0.72) 46vmin,
+    rgba(3, 8, 5, 0.96) 62vmin,
+    var(--ink) 74vmin
+  );
+}
+
+/* 目镜边框：一圈细环，强化"透过镜筒看"的感觉，不遮挡中央 */
+.scope-mask::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 60vmin;
+  height: 60vmin;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(216, 255, 95, 0.28);
+  border-radius: 50%;
+  box-shadow: inset 0 0 40px rgba(216, 255, 95, 0.08);
+}
+
+/* 准星：极细十字，只在正中央 */
+.scope-reticle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
+}
+
+.scope-reticle span {
+  position: absolute;
+  background: rgba(216, 255, 95, 0.62);
+}
+
+.scope-reticle span:first-child {
+  left: 50%;
+  top: 0;
+  width: 1px;
+  height: 100%;
+  transform: translateX(-50%);
+}
+
+.scope-reticle span:last-child {
+  top: 50%;
+  left: 0;
+  height: 1px;
+  width: 100%;
+  transform: translateY(-50%);
+}
+
+/* 内容区：左下角，半透明深底，不压到中央视场 */
+.scope-hud {
+  position: absolute;
+  left: max(20px, 4vw);
+  bottom: max(20px, 5vh);
+  width: min(340px, 34vw);
+  padding: 18px 20px 20px;
+  border: 1px solid rgba(216, 255, 95, 0.22);
+  border-left: 2px solid var(--lime);
+  border-radius: 10px;
+  background: rgba(6, 15, 10, 0.82);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 18px 40px -24px rgba(0, 0, 0, 0.9);
+}
+
+.scope-kicker {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: rgba(216, 255, 95, 0.72);
+}
+
+.scope-index {
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: rgba(216, 255, 95, 0.86);
+}
+
+.scope-title {
+  margin: 0 0 10px;
+  font-family: var(--display);
+  font-size: 19px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--paper);
+  text-wrap: balance;
+}
+
+.scope-body {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.68;
+  color: var(--paper-dim);
+}
+
+.scope-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scope-tags li {
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--paper-dim);
+}
+
+.scope-prompt {
+  margin: 0 0 10px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--paper-dim);
+}
+
+.scope-index-list ul {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scope-index-list li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+  color: var(--paper-dim);
+}
+
+.scope-index-list li span:first-child {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: rgba(216, 255, 95, 0.8);
+}
+
+/* 未连入：还没被连进星座，整体压暗 */
+.scope-index-list li.is-open {
+  color: rgba(255, 255, 255, 0.34);
+}
+.scope-index-list li.is-open span:first-child {
+  color: rgba(255, 255, 255, 0.3);
+}
+/* 已连入：高亮 lime 强调 */
+.scope-index-list li.is-linked {
+  color: rgba(255, 255, 255, 0.92);
+}
+.scope-index-list li.is-linked span:first-child {
+  color: rgba(216, 255, 95, 0.9);
+}
+
+/* 连星进度：x/6 */
+.scope-count {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--paper-dim);
+}
+.scope-count span {
+  color: rgba(216, 255, 95, 0.9);
+}
+
+/* 退出提示：右下角，和左下内容区错开 */
+.scope-exit {
+  position: absolute;
+  right: max(20px, 4vw);
+  bottom: max(20px, 5vh);
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--paper-faint);
+}
+
+/* 窄屏：内容区改到屏幕下方通栏，避免压住中央视场 */
+@media (max-width: 720px) {
+  .scope-mask {
+    background: radial-gradient(
+      circle at 50% 42%,
+      transparent 0,
+      transparent 26vmin,
+      rgba(3, 8, 5, 0.74) 40vmin,
+      var(--ink) 58vmin
+    );
+  }
+
+  .scope-mask::after {
+    width: 52vmin;
+    height: 52vmin;
+  }
+
+  .scope-hud {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    padding: 14px 16px 16px;
+  }
+
+  .scope-title {
+    font-size: 17px;
+  }
+
+  .scope-exit {
+    display: none;
+  }
+}

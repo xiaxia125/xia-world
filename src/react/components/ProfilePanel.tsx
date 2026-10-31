@@ -302,24 +302,6 @@ function Contact() {
         <h3>{PROFILE.name} · {PROFILE.role}</h3>
         <p>5 年前端开发经验 · 可沟通具体岗位与团队方向</p>
         <EmailActions />
-        <div className="profile-email-actions profile-email-actions--links">
-          <a
-            className="profile-action profile-action--quiet"
-            href={PROFILE.contact.githubRepo}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            这个站点的源码 <span aria-hidden="true">↗</span>
-          </a>
-          <a
-            className="profile-action profile-action--quiet"
-            href={PROFILE.contact.github}
-            target="_blank"
-            rel="noreferrer noopener"
-          >
-            GitHub 主页 <span aria-hidden="true">↗</span>
-          </a>
-        </div>
         <div className="profile-contact-meta">
           <div>
             <span>求职方向</span>
@@ -350,7 +332,14 @@ const VIEWS: Record<ProfileTab, ComponentType> = {
 };
 
 /** Full-screen public profile opened from the HUD, start screen or an in-world kiosk. */
-export function ProfilePanel({ snapshot }: { snapshot: UISnapshot }) {
+export function ProfilePanel({
+  snapshot,
+  closeLabel = "返回世界",
+}: {
+  snapshot: UISnapshot;
+  /** 世界没起来时按钮文案换成「返回」，因为并没有可以回去的世界。 */
+  closeLabel?: string;
+}) {
   const panelRef = useRef<HTMLElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -441,7 +430,7 @@ export function ProfilePanel({ snapshot }: { snapshot: UISnapshot }) {
             <span className="profile-topbar-version">2026 · FRONTEND</span>
           </div>
           <button ref={closeRef} className="profile-close" type="button" onClick={() => ui.closeProfile()}>
-            <span>返回世界</span>
+            <span>{closeLabel}</span>
             <kbd>ESC</kbd>
           </button>
         </header>

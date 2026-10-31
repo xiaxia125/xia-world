@@ -258,53 +258,130 @@ export function signTexture(
   return finish(c, 4);
 }
 
-export function signalTexture(
-  title: string,
-  lines: string[],
-  wide = false,
-): THREE.CanvasTexture {
-  const width = wide ? 1024 : 768;
-  const height = wide ? 576 : 1024;
+export interface SignalScreen {
+  /** 大标题，例如「工作方式」。 */
+  title: string;
+  /** 标题上方的一行小字，交代来源。 */
+  subtitle: string;
+  /** 行式内容：序号 / 标题 / 右侧说明。 */
+  rows?: ReadonlyArray<readonly [string, string, string]>;
+  /** 段落式内容，和 rows 二选一。 */
+  body?: readonly string[];
+  /** 右上角的落款。 */
+  corner?: string;
+  /** 底部按键提示。 */
+  hint?: string;
+}
+
+/**
+ * 按 E 之后屏幕翻到的第二页。
+ *
+ * 之前这块是「一块深色底 + 几行字」，贴在 16:9 显示器上大半是空的，
+ * 和默认那张 WORKING PROFILE 完全不像一套东西。现在沿用同一套版式：
+ * 同样的边框、标题层级、行距和底部提示，翻页只是换内容，不是换风格。
+ */
+export function signalTexture(screen: SignalScreen): THREE.CanvasTexture {
+  const width = 1024;
+  const height = 576;
   const { c, ctx } = canvas(width, height);
-  const pad = wide ? 56 : 48;
   ctx.fillStyle = "#07110c";
   ctx.fillRect(0, 0, width, height);
-  ctx.strokeStyle = "rgba(216,255,95,0.3)";
+
+  const glow = ctx.createRadialGradient(512, 280, 30, 512, 280, 560);
+  glow.addColorStop(0, "rgba(216,255,95,0.12)");
+  glow.addColorStop(1, "rgba(216,255,95,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "rgba(216,255,95,0.22)";
   ctx.lineWidth = 2;
-  ctx.strokeRect(18, 18, width - 36, height - 36);
+  ctx.strokeRect(24, 24, width - 48, height - 48);
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "alphabetic";
+
   ctx.fillStyle = "#d8ff5f";
-  ctx.font = "600 18px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("XIA HOME / SIGNAL", pad, pad + 8);
-  ctx.fillStyle = "#f1ecdf";
-  ctx.font = `800 ${wide ? 48 : 54}px 'Arial Black', 'PingFang SC', sans-serif`;
-  ctx.textBaseline = "top";
-  ctx.fillText(title, pad, wide ? 108 : 128, width - pad * 2);
-  ctx.fillStyle = "rgba(241,236,223,0.82)";
-  ctx.font = `${wide ? 24 : 28}px 'PingFang SC', 'Microsoft YaHei', sans-serif`;
-  const lineHeight = wide ? 44 : 48;
-  let y = wide ? 190 : 260;
-  const maxWidth = width - pad * 2;
-  for (const paragraph of lines) {
-    let line = "";
-    for (const character of paragraph) {
-      const next = line + character;
-      if (ctx.measureText(next).width > maxWidth && line) {
-        ctx.fillText(line, pad, y);
-        y += lineHeight;
-        line = character;
-      } else {
-        line = next;
-      }
-    }
-    if (line) {
-      ctx.fillText(line, pad, y);
-      y += lineHeight;
-    }
-    y += wide ? 12 : 18;
+  ctx.font = "600 20px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("XIA HOME // SIGNAL", 52, 72);
+
+  if (screen.corner) {
+    ctx.textAlign = "right";
+    ctx.fillStyle = "rgba(216,255,95,0.5)";
+    ctx.font = "400 14px 'Cascadia Code', Consolas, monospace";
+    ctx.fillText(screen.corner.toUpperCase(), width - 52, 72);
+    ctx.textAlign = "left";
   }
-  ctx.fillStyle = "rgba(241,236,223,0.5)";
+
+  ctx.fillStyle = "rgba(241,236,223,0.4)";
   ctx.font = "400 16px 'Cascadia Code', Consolas, monospace";
-  ctx.fillText("PRESS E TO RETURN", pad, height - pad);
+  ctx.fillText(screen.subtitle, 52, 108);
+
+  // 标题按可用宽度自动收字号，中文长标题不会顶到边框。
+  let titleSize = 68;
+  ctx.font = `800 ${titleSize}px 'Arial Black', 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+  while (ctx.measureText(screen.title).width > width - 104 && titleSize > 36) {
+    titleSize -= 2;
+    ctx.font = `800 ${titleSize}px 'Arial Black', 'PingFang SC', 'Microsoft YaHei', sans-serif`;
+  }
+  ctx.fillStyle = "#f1ecdf";
+  ctx.fillText(screen.title, 50, 198);
+
+  if (screen.rows) {
+    let y = 258;
+    for (const [index, label, value] of screen.rows) {
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#d8ff5f";
+      ctx.font = "700 20px 'Cascadia Code', Consolas, monospace";
+      ctx.fillText(index, 54, y);
+
+      ctx.fillStyle = "#f1ecdf";
+      ctx.font = "500 26px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+      ctx.fillText(label, 108, y);
+
+      if (value) {
+        ctx.textAlign = "right";
+        ctx.fillStyle = "rgba(241,236,223,0.6)";
+        ctx.font = "400 19px 'Cascadia Code', Consolas, monospace";
+        ctx.fillText(value, width - 54, y - 2);
+      }
+      y += 42;
+    }
+    ctx.textAlign = "left";
+  } else if (screen.body) {
+    // 段落页多半出现在密室那种小屏上：字号放大一点，凑近才看得清。
+    ctx.fillStyle = "rgba(241,236,223,0.82)";
+    ctx.font = "400 30px 'PingFang SC', 'Microsoft YaHei', sans-serif";
+    let y = 252;
+    for (const paragraph of screen.body) {
+      for (const line of wrapLines(ctx, paragraph, width - 108)) {
+        ctx.fillText(line, 54, y);
+        y += 44;
+      }
+      y += 4;
+    }
+  }
+
+  ctx.strokeStyle = "rgba(241,236,223,0.12)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(52, 384);
+  ctx.lineTo(width - 52, 384);
+  ctx.stroke();
+
+  ctx.fillStyle = "#d8ff5f";
+  ctx.font = "700 26px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText(screen.hint ?? "> 按 E 返回", 52, 440);
+
+  ctx.fillStyle = "rgba(241,236,223,0.36)";
+  ctx.font = "400 18px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("SIGNAL CAPTURED · XIA HOME", 52, 492);
+
+  ctx.fillStyle = "rgba(216,255,95,0.5)";
+  ctx.font = "400 14px 'Cascadia Code', Consolas, monospace";
+  ctx.textAlign = "right";
+  ctx.fillText("2026", width - 52, 492);
+  ctx.textAlign = "left";
+
   return finish(c, 8);
 }
 
@@ -488,6 +565,81 @@ export function posterTexture(
   ctx.lineWidth = 2;
   ctx.strokeRect(16, 16, 736, 992);
   return finish(c, 8);
+}
+
+/**
+ * 观景台照片墙上的小照片：一张低多边形落日/远山速写 + 底部手写标签。
+ * 用 canvas 画出来而不是贴外部图片，风格和岛上的像素块保持一致。
+ */
+export function photoPrintTexture(
+  index: string,
+  caption: string,
+  palette: [string, string, string],
+): THREE.CanvasTexture {
+  const { c, ctx } = canvas(512, 640);
+  const [sky, sun, hill] = palette;
+
+  ctx.fillStyle = "#f1ecdf";
+  ctx.fillRect(0, 0, 512, 640);
+
+  const x = 26;
+  const y = 26;
+  const w = 460;
+  const h = 452;
+
+  // 天空：三条横向色带，像低分辨率的渐层。
+  ctx.fillStyle = sky;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = "rgba(255,255,255,0.12)";
+  ctx.fillRect(x, y + h * 0.22, w, h * 0.2);
+  ctx.fillStyle = "rgba(0,0,0,0.08)";
+  ctx.fillRect(x, y + h * 0.5, w, h * 0.5);
+
+  // 落日：方块感的一点圆。
+  ctx.fillStyle = sun;
+  ctx.beginPath();
+  ctx.arc(x + w * 0.62, y + h * 0.5, 58, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 两层山脊，前景更深。
+  ctx.fillStyle = hill;
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y + h * 0.68);
+  ctx.lineTo(x + w * 0.18, y + h * 0.56);
+  ctx.lineTo(x + w * 0.36, y + h * 0.66);
+  ctx.lineTo(x + w * 0.56, y + h * 0.58);
+  ctx.lineTo(x + w * 0.78, y + h * 0.7);
+  ctx.lineTo(x + w, y + h * 0.62);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "rgba(0,0,0,0.22)";
+  ctx.beginPath();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y + h * 0.84);
+  ctx.lineTo(x + w * 0.3, y + h * 0.76);
+  ctx.lineTo(x + w * 0.62, y + h * 0.86);
+  ctx.lineTo(x + w, y + h * 0.78);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+  ctx.fill();
+
+  // 照片白边 + 标签。
+  ctx.strokeStyle = "rgba(20,28,24,0.25)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+  ctx.fillStyle = "#1c2420";
+  ctx.font = "700 24px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText(index, 30, 528);
+  ctx.fillStyle = "rgba(28,36,32,0.62)";
+  ctx.font = "500 16px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText(caption.toUpperCase(), 30, 570);
+  ctx.fillStyle = "rgba(28,36,32,0.35)";
+  ctx.font = "400 14px 'Cascadia Code', Consolas, monospace";
+  ctx.fillText("XIA LOOKOUT · 2026", 30, 604);
+
+  return finish(c, 4);
 }
 
 /**

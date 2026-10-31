@@ -67,9 +67,7 @@ export const CONSTELLATION_STARS: ReadonlyArray<{
     position: [3.4, 14.8, -11.6],
   },
 ];
-import { signalTexture } from "./textures";
 import type { Interactable } from "./types";
-import type { SignalCopy } from "../signals";
 
 export interface WorldSignals {
   applyConstellationState(...args: any[]): any;

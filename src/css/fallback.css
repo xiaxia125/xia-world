@@ -1,0 +1,247 @@
+/* -------------------------------------------------------------- fallback */
+
+.noscript,
+.webgl-error {
+  position: fixed;
+  inset: 0;
+  /* 职业档案面板是 z-index:90，错误页要留在它下面，才能从错误页打开档案。 */
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: var(--ink);
+  color: var(--paper);
+  text-align: center;
+  overflow-y: auto;
+}
+
+.webgl-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 18px 28px;
+  margin-top: 28px;
+}
+
+.webgl-error-actions p {
+  margin: 0;
+}
+
+.webgl-error-actions .btn-primary {
+  min-height: 52px;
+}
+
+.noscript {
+  z-index: 100;
+}
+
+/* ------------------------------------------------------------ responsive */
+
+@media (max-width: 900px) {
+  .start {
+    background: linear-gradient(
+      180deg,
+      rgba(4, 10, 7, 0.92) 0%,
+      rgba(4, 10, 7, 0.78) 55%,
+      rgba(4, 10, 7, 0.45) 100%
+    );
+  }
+
+  .start-body {
+    width: min(620px, 100%);
+    align-self: end;
+    padding-bottom: 5vh;
+  }
+
+  .start-title {
+    font-size: clamp(56px, 16vw, 112px);
+  }
+
+  .start-grid {
+    background-size: 48px 48px;
+    mask-image: linear-gradient(180deg, black, transparent 80%);
+  }
+
+  .hud-hint span:nth-child(n + 4) {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .start {
+    padding: 18px;
+    gap: 14px;
+    overflow-y: auto;
+    background: linear-gradient(
+      180deg,
+      rgba(4, 10, 7, 0.93),
+      rgba(4, 10, 7, 0.975) 55%,
+      rgba(4, 10, 7, 0.995)
+    );
+  }
+
+  .start-body {
+    padding-bottom: 8px;
+  }
+
+  /* 手机首屏也要看到「经验 / 方向 / 求职中」这三条，改为横排可换行 */
+  .start-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 0;
+  }
+
+  .start-top {
+    font-size: 10px;
+  }
+
+  .start-top-right {
+    display: none;
+  }
+
+  .start-title {
+    font-size: clamp(52px, 18vw, 92px);
+    line-height: 0.82;
+  }
+
+  .start-title .outline {
+    transform: translateX(8px);
+    -webkit-text-stroke-width: 1px;
+  }
+
+  .start-lede {
+    font-size: 13px;
+    line-height: 1.8;
+  }
+
+  .start-lede br {
+    display: none;
+  }
+
+  .start-lede-small {
+    font-size: 11px;
+  }
+
+  .start-actions {
+    gap: 14px;
+    margin-top: 22px;
+  }
+
+  .btn-primary {
+    min-height: 52px;
+    padding-left: 20px;
+  }
+
+  .btn-arrow {
+    width: 36px;
+    height: 36px;
+  }
+
+  .start-meta {
+    margin-top: 26px;
+    padding-top: 12px;
+  }
+
+  .start-meta li {
+    font-size: 11px;
+  }
+
+  .start-meta li:nth-child(3) {
+    display: flex;
+  }
+
+  .start-bottom {
+    display: none;
+  }
+
+  .hud-top,
+  .hud-bottom {
+    padding: 12px;
+  }
+
+  .hud-brand span:last-child {
+    display: none;
+  }
+
+  .profile-chip > span:last-child {
+    display: none;
+  }
+
+  .profile-chip {
+    padding: 0 9px;
+  }
+
+  .hud-hint {
+    display: none;
+  }
+
+  .hud-badges {
+    position: absolute;
+    bottom: 132px;
+    left: 12px;
+  }
+
+  .hud-badges .chip:first-child {
+    display: none;
+  }
+
+  .clock #day-phase {
+    display: none;
+  }
+
+  .prompt {
+    bottom: 150px;
+    font-size: 11px;
+  }
+
+  .pause {
+    padding: 14px 18px;
+  }
+
+  .sheet {
+    top: auto;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    width: auto;
+    max-height: 78vh;
+    border-radius: 14px;
+  }
+
+  .map-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .map-legend {
+    order: 2;
+  }
+
+  .map-topbar {
+    padding: 12px 14px;
+  }
+
+  .reading-panel {
+    padding: 10px;
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .hud-hint {
+    display: none;
+  }
+
+  #scene {
+    cursor: default;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

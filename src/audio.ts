@@ -1,7 +1,6 @@
 export class AudioSystem {
   private ctx?: AudioContext;
   private master?: GainNode;
-  private ambientGain?: GainNode;
   private rainGain?: GainNode;
   private radioGain?: GainNode;
   private radioOn = false;
@@ -105,7 +104,6 @@ export class AudioSystem {
     gain.gain.value = 0.018;
     source.connect(filter).connect(gain).connect(this.master);
     source.start();
-    this.ambientGain = gain;
 
     // A very low drone gives the world a sense of place.
     const drone = ctx.createOscillator();
@@ -418,7 +416,6 @@ export class AudioSystem {
     const context = this.ctx;
     this.ctx = undefined;
     this.master = undefined;
-    this.ambientGain = undefined;
     this.rainGain = undefined;
     this.radioGain = undefined;
     this.musicGain = undefined;

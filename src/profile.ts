@@ -217,9 +217,7 @@ export const PROFILE = {
     emailUser: EMAIL_USER,
     emailDomain: EMAIL_DOMAIN,
     label: "邮箱联系",
-    github: "https://github.com/xiaxia125",
-    githubRepo: "https://github.com/xiaxia125/xia-world",
-    note: "公开版档案仅提供邮箱与 GitHub。手机号、年龄、性别、政治面貌等私人信息不对外展示。",
+    note: "公开版档案仅提供邮箱。手机号、年龄、性别、政治面貌等私人信息不对外展示。",
   },
 } as const;
 

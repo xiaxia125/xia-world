@@ -13,7 +13,6 @@ interface Drop {
 export class WeatherSystem {
   type: WeatherType = "clear";
 
-  private readonly scene: THREE.Scene;
   private readonly rain: THREE.LineSegments;
   private readonly rainPositions: Float32Array;
   private readonly drops: Drop[] = [];
@@ -31,8 +30,8 @@ export class WeatherSystem {
   private readonly dropCount: number;
   private readonly flakeCount: number;
 
+
   constructor(scene: THREE.Scene, quality: Quality) {
-    this.scene = scene;
     this.dropCount = quality === "high" ? 1100 : 520;
     this.flakeCount = quality === "high" ? 760 : 360;
 
