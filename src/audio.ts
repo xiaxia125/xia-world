@@ -58,7 +58,7 @@ export class AudioSystem {
   }
 
   /**
-   * 进入别的视图（BIM 查看器、拍照取景）时把 3D 世界的声音整体淡出，返回时恢复。
+   * 进入别的视图（拍照取景）时把 3D 世界的声音整体淡出，返回时恢复。
    * 不走 setVolume，避免把用户设置的总音量冲掉。
    */
   setWorldPaused(paused: boolean) {

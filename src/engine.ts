@@ -10,16 +10,15 @@ import { WeatherSystem } from "./weather";
 import { VoxelWorld } from "./world/world";
 import { ZONES, zoneAt } from "./world/zones";
 import { disposeThreeScene } from "./runtime/dispose-scene";
-import type { BimSceneHandle } from "./bim/bim-scene";
-import { typeLabel as typeLabelOf, type BimElement } from "./bim/building";
 import type { Interactable, Quality, WeatherType } from "./world/types";
 
 const SAVE_KEY = "voxel-home-v1";
 const CURRENT_SAVE_KEY = "xia-home-save";
 /** 操作说明只在第一次进岛时自动弹一次；用户自己按 H 不算。 */
 const HELP_SEEN_KEY = "xia-home-help-seen";
-const EGG_TOTAL = 5;
+const EGG_TOTAL = 6;
 const EGG_IDS = new Set([
+  "constellation",
   "court",
   "duck",
   "radio",
@@ -488,140 +487,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   let telescopeActive = false;
 
-  // ------------------------------------------------------------------ BIM
-
-  /** 打开中的 BIM 场景句柄；null 表示不在查看器里。 */
-  let bimHandle: BimSceneHandle | null = null;
-  /** 当前数据源的构件索引，id → 构件，选中时查属性用。 */
-  let bimElementIndex = new Map<string, BimElement>();
-  /** 进 BIM 前的站位，退出时原样还原。 */
-  let bimReturn: { x: number; y: number; z: number; yaw: number; pitch: number } | null = null;
-  /** 打开过程中被取消（连按 E 或立刻退出）时用它丢弃晚到的加载结果。 */
-  let bimToken = 0;
-
-  /**
-   * 进入 BIM 查看器。
-   *
-   * 世界不销毁，只是停止渲染、停止推进——退出时世界还在原处，省掉重建成本，
-   * 也不会因为反复进出把显存撑大。BIM 那套 scene 是独立建的，退出时必须 dispose。
-   */
-  async function enterBim() {
-    if (bimHandle || ui.isBlocking) return;
-    const token = ++bimToken;
-
-    bimReturn = {
-      x: player.position.x,
-      y: player.position.y,
-      z: player.position.z,
-      yaw: player.yaw,
-      pitch: player.pitch,
-    };
-    player.enabled = false;
-    exitTelescope(false);
-    if (document.pointerLockElement) document.exitPointerLock();
-    ui.openBim();
-    audio.setWorldPaused(true);
-
-    try {
-      // 按需加载：不进 BIM 就不会下载这套代码
-      const [{ loadBimSource }, { createBimScene }] = await Promise.all([
-        import("./bim/loader"),
-        import("./bim/bim-scene"),
-      ]);
-      const source = await loadBimSource((v) => {
-        if (token === bimToken) ui.setBimProgress(v);
-      });
-      if (token !== bimToken) return;
-
-      // canvas 在 boot 开头已经检查过非空，这里再收窄一次类型给 TS 看
-      const sceneCanvas = canvas;
-      if (!sceneCanvas) return;
-      const handle = createBimScene(source.building, sceneCanvas);
-      if (source.model) {
-        // glb 模式：用模型自带的网格替换掉按构件重建的那一套，
-        // 保留包围盒与构件清单（从模型里读出来的）。
-        handle.root.add(source.model);
-      }
-      bimHandle = handle;
-      handle.attach(sceneCanvas);
-      handle.resize(window.innerWidth, window.innerHeight);
-      bimElementIndex = new Map(source.building.elements.map((el) => [el.id, el]));
-
-      const { setBimPanelData, setBimPanelHandlers } = await import(
-        "./react/components/BimView"
-      );
-      setBimPanelData({ elements: source.building.elements });
-      setBimPanelHandlers({
-        onShowFloor: (floor) => {
-          if (!bimHandle) return;
-          bimHandle.showFloor(floor);
-          ui.setBimFloor(floor);
-        },
-        onSelect: (id) => selectBimElement(id),
-        onExit: () => exitBim(),
-        onRetry: () => {
-          exitBim(false);
-          void enterBim();
-        },
-      });
-
-      if (token !== bimToken) return;
-      ui.setBimReady(source.origin);
-      if (source.note) {
-        ui.toast(`模型读取失败，已回退到程序化建筑：${source.note}`, 5200);
-      }
-    } catch (err) {
-      if (token !== bimToken) return;
-      // 失败也要把世界放回来，否则玩家卡在空画面里
-      ui.setBimError(
-        `BIM 场景没能装起来：${err instanceof Error ? err.message : String(err)}`,
-      );
-      audio.setWorldPaused(false);
-    }
-  }
-
-  /** 退出：还原站位与朝向，释放 BIM 那套资源。 */
-  function exitBim(resume = true) {
-    bimToken += 1;
-    if (bimHandle) {
-      bimHandle.dispose();
-      bimHandle = null;
-    }
-    void import("./react/components/BimView").then(({ setBimPanelHandlers }) => {
-      setBimPanelHandlers(null);
-    });
-    ui.closeBim(false);
-    audio.setWorldPaused(false);
-
-    if (bimReturn) {
-      player.setPosition(bimReturn.x, bimReturn.y, bimReturn.z, bimReturn.yaw, bimReturn.pitch);
-      bimReturn = null;
-    }
-    player.enabled = true;
-    if (resume) resumeGame();
-  }
-
-  /** 选中一个构件：高亮 + 属性卡。 */
-  function selectBimElement(id: string | null) {
-    if (!bimHandle) return;
-    bimHandle.highlight(id);
-    if (!id) {
-      ui.selectBimElement(null);
-      return;
-    }
-    const found = bimElementIndex.get(id);
-    if (!found) return;
-    ui.selectBimElement({
-      id: found.id,
-      name: found.name,
-      type: typeLabelOf(found.type),
-      floor: found.floor,
-      volume: found.volume,
-      elevation: found.elevation,
-      material: found.material,
-    });
-  }
-
   /** 坐下：位置与朝向来自座椅代理上的 userData，起身时由 Player 自己还原。 */
   function sitDown(anchor: {
     x: number;
@@ -659,6 +524,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
   function enterTelescope() {
     if (!world.isSignalConstellationOpen && !world.toggleSignalConstellation()) return;
+    // 星点颜色由访客印章区分（已盖章亮金、未盖章淡蓝），但所有星都可连。
+    world.setExploredZones(stamps);
     telescopeActive = true;
     // 相机贴近镜筒时模型会挡住整个窄视野，取景期间把它藏起来，退出再放回。
     world.setTelescopeModelVisible(false);
@@ -666,8 +533,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     ui.setScopeOpen(true);
     aimTelescope();
     ui.toast(
-      "望远镜已对准信号星座。移动鼠标观察，瞄准星点按 E 读取；移动、WASD 或空处 E 退出。",
-      7000,
+      "望远镜对准了夜空。用准星瞄准一颗星点，按 E 把它连进你正在画的星座；每连一颗，线就多画出一条。连满六颗，星座成形。移动、WASD 或空处 E 退出。",
+      8000,
     );
   }
 
@@ -698,13 +565,30 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       return;
     }
     audio.click();
-    // 星点内容走 DOM 目镜面板：3D 贴图在 24° 视野里发糊，文字交给 DOM 渲染才清楚。
-    const reading = world.signalReadings.get(target.id);
-    if (reading) {
-      ui.setScopeReading({ ...reading, id: target.id });
+    // 望远镜连星座：把对准的星点连进玩家正在画的星座，连满六颗成形给印章。
+    const linked = world.linkStar(target.id);
+    if (linked) {
+      ui.setScopeReading({
+        id: linked.id,
+        index: linked.index,
+        label: linked.label,
+        title: linked.title,
+        body: linked.body,
+        tags: linked.tags,
+      });
+      if (linked.complete) {
+        collectEgg("constellation");
+        defer(() => {
+          ui.toast("你亲手把整片探索星座连了起来。这六颗星，是这个家的地图。", 5200);
+        }, 1400);
+      }
       currentTarget = null;
       checkTimer = 0;
       save();
+      return;
+    }
+    if (target.id.startsWith("explore-")) {
+      ui.toast("这颗星已经连入星座了。", 1600);
       return;
     }
     // 小径石碑和风车：贴图上只留年份，正文用阅读面板展开。
@@ -745,9 +629,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
         }
         break;
       }
-      case "bim":
-        void enterBim();
-        break;
       case "map":
         ui.openMap();
         break;
@@ -949,15 +830,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       if (event.code === "KeyP") {
         event.preventDefault();
         ui.closeProfile();
-      }
-      return;
-    }
-
-    // BIM 查看器打开时，整个键盘交给它：Esc 退出，其余按键都不该漏到世界那边。
-    if (ui.isBimOpen) {
-      if (event.code === "Escape") {
-        event.preventDefault();
-        exitBim();
       }
       return;
     }
@@ -1182,14 +1054,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
     if (telescopeActive && (ui.isBlocking || !player.enabled)) exitTelescope(false);
 
-    // BIM 查看器占着整个画面：世界这一帧不推进也不渲染，只把 BIM 场景画出来。
-    if (bimHandle && ui.isBimOpen) {
-      bimHandle.resize(window.innerWidth, window.innerHeight);
-      bimHandle.controls.update();
-      renderer.render(bimHandle.scene, bimHandle.camera);
-      return;
-    }
-
     if (!ui.isBlocking) {
       player.update(dt);
       if (telescopeActive && player.hasMoveInput) exitTelescope(true);
@@ -1226,22 +1090,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
 
     renderer.render(scene, camera);
   }
-
-  // BIM 查看器里的点选：用 click 而不是 pointerdown，这样拖动旋转结束时不会误选。
-  // 只有几乎没移动的点击才算「点了一下」。
-  let bimDown: { x: number; y: number } | null = null;
-  canvas.addEventListener("pointerdown", (event) => {
-    if (!ui.isBimOpen || !bimHandle) return;
-    bimDown = { x: event.clientX, y: event.clientY };
-  }, { signal: events.signal });
-  canvas.addEventListener("pointerup", (event) => {
-    if (!ui.isBimOpen || !bimHandle || !bimDown) return;
-    const moved = Math.hypot(event.clientX - bimDown.x, event.clientY - bimDown.y);
-    bimDown = null;
-    if (moved > 4) return; // 拖动过，是在转模型，不是点构件
-    const hit = bimHandle.pick(event.clientX, event.clientY);
-    selectBimElement(hit ? hit.id : null);
-  }, { signal: events.signal });
 
   window.addEventListener("resize", () => {
     const width = window.innerWidth;
@@ -1289,10 +1137,6 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     /** 验收用：读钢琴模式开关。 */
     get pianoActive() {
       return pianoActive;
-    },
-    /** BIM 查看器的句柄；不在查看器里时为 null。验收要读它自己的相机与统计。 */
-    get bim() {
-      return bimHandle;
     },
   };
   if (import.meta.env.DEV) {

@@ -1,7 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { ui } from "../ui";
 import { HelpPanel } from "./components/HelpPanel";
-import { BimView } from "./components/BimView";
 import { Hud } from "./components/Hud";
 import { MapPanel } from "./components/MapPanel";
 import { PhotoBar } from "./components/PhotoBar";
@@ -35,7 +34,6 @@ export function WorldInterface() {
       <PianoBar snapshot={snapshot} handlers={handlers} />
       <ProfilePanel snapshot={snapshot} />
       <ScopeView snapshot={snapshot} />
-      <BimView snapshot={snapshot} />
       <TouchControls snapshot={snapshot} />
     </div>
   );

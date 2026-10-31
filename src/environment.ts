@@ -56,9 +56,9 @@ export class Environment {
   private readonly fog: THREE.FogExp2;
   private fogDensity = 0.007;
   private clouds?: THREE.InstancedMesh;
-  private birds: THREE.Group[] = [];
   private cloudDrift = 0;
-  private birdTime = 0;
+  private readonly whiteColor = new THREE.Color(0xffffff);
+  private readonly cloudColor = new THREE.Color();
 
   constructor(scene: THREE.Scene, renderer: THREE.WebGLRenderer) {
     this.scene = scene;
@@ -193,100 +193,109 @@ export class Environment {
     scene.add(this.stars);
 
     this.buildClouds();
-    this.buildBirds();
   }
 
   /**
-   * 方块云：用少量扁平方块拼出一朵，再在半径 320 的天空里摆一圈。
-   * 云整体跟随相机平移，所以永远飘在头顶，而不会在漫游时被落下。
+   * 体素云：用扁平方块按格网拼出蓬松的云团轮廓，和岛上其他方块同一套语言。
+   *
+   * 之前用半透明球体堆叠，球与球的重叠处会叠出更亮的斑块和一圈圈球体边缘，
+   * 看起来像泡泡堆；改成实心方块后没有透明排序问题，边缘干净。
+   * 每个方块按朝向刷了一点明暗（顶面亮、底面偏蓝），不用灯光也有体积感。
    */
   private buildClouds() {
-    const cloudCount = 16;
-    const puffsPerCloud = 4;
+    const cloudCount = 20;
     const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mat = new THREE.MeshLambertMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.86,
-      depthWrite: false,
-      fog: false,
-    });
-    const mesh = new THREE.InstancedMesh(geo, mat, cloudCount * puffsPerCloud);
+    // BoxGeometry 的 24 个顶点按 +X / -X / +Y / -Y / +Z / -Z 六面排列。
+    const faceTint: ReadonlyArray<readonly [number, number, number]> = [
+      [0.9, 0.93, 0.98],
+      [0.9, 0.93, 0.98],
+      [1, 1, 1],
+      [0.68, 0.73, 0.84],
+      [0.9, 0.93, 0.98],
+      [0.9, 0.93, 0.98],
+    ];
+    const colors = new Float32Array(geo.attributes.position.count * 3);
+    for (let f = 0; f < faceTint.length; f += 1) {
+      const [r, g, b] = faceTint[f]!;
+      for (let v = 0; v < 4; v += 1) {
+        const i = (f * 4 + v) * 3;
+        colors[i] = r;
+        colors[i + 1] = g;
+        colors[i + 2] = b;
+      }
+    }
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: true, fog: false });
+
+    // 先生成方块规格，再按实际数量创建实例网格。
+    const boxes: Array<{ x: number; y: number; z: number; w: number; h: number; d: number }> = [];
+    // 固定种子的伪随机，云团形状每次刷新都一致。
+    const rand = (seed: number) => {
+      const s = Math.sin(seed * 127.1 + 311.7) * 43758.5453;
+      return s - Math.floor(s);
+    };
+
+    for (let c = 0; c < cloudCount; c += 1) {
+      const angle = (c / cloudCount) * Math.PI * 2 + (c % 3) * 0.23;
+      const radius = 125 + ((c * 53) % 155);
+      const baseY = 72 + ((c * 37) % 54);
+      const cell = 6 + ((c * 13) % 3) * 1.3; // 6~8.6 米一格
+      const cols = 5 + ((c * 7) % 3); // 5~7 格宽
+      const rows = 3 + ((c * 5) % 2); // 3~4 格深
+      const layers = 3; // 三层，中间层最鼓，上下收口
+      const cx = Math.cos(angle) * radius;
+      const cz = Math.sin(angle) * radius;
+
+      for (let gy = 0; gy < layers; gy += 1) {
+        for (let gx = 0; gx < cols; gx += 1) {
+          for (let gz = 0; gz < rows; gz += 1) {
+            const nx = (gx - (cols - 1) / 2) / (cols / 2);
+            const nz = (gz - (rows - 1) / 2) / (rows / 2);
+            const ny = (gy - (layers - 1) / 2) / (layers / 2);
+            // 三维椭球蒙版：横向铺开、纵向压扁，再掺一点随机缺口，
+            // 让轮廓是一坨凹凸的方块团，而不是一块平板。
+            const d = nx * nx + nz * nz * 1.15 + ny * ny;
+            if (d > 0.88 + rand(c * 97 + gx * 31 + gz * 17 + gy * 7) * 0.4) continue;
+
+            const jitterX = (rand(c * 13 + gx * 7 + gz * 3 + gy * 5) - 0.5) * cell * 0.16;
+            const jitterZ = (rand(c * 29 + gx * 11 + gz * 5 + gy * 3) - 0.5) * cell * 0.16;
+            const jitterY = (rand(c * 41 + gx * 5 + gz * 13 + gy * 9) - 0.5) * cell * 0.2;
+            // 略有缩放差、且比格子大一点，接缝处互相咬住，看不出网格。
+            const s = cell * (1.02 + rand(c * 53 + gx * 3 + gz * 19 + gy * 23) * 0.12);
+
+            boxes.push({
+              x: cx + (gx - (cols - 1) / 2) * cell + jitterX,
+              y: baseY + (gy - (layers - 1) / 2) * cell * 0.78 + jitterY,
+              z: cz + (gz - (rows - 1) / 2) * cell + jitterZ,
+              w: s,
+              h: s * (0.82 + rand(c * 7 + gx * 13 + gz * 29 + gy * 31) * 0.24),
+              d: s,
+            });
+          }
+        }
+      }
+    }
+
+    const mesh = new THREE.InstancedMesh(geo, mat, boxes.length);
+    mesh.name = "clouds";
     mesh.frustumCulled = false;
     mesh.renderOrder = -1;
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
 
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
     const pos = new THREE.Vector3();
     const scale = new THREE.Vector3();
-
-    for (let c = 0; c < cloudCount; c += 1) {
-      const angle = (c / cloudCount) * Math.PI * 2 + (c % 3) * 0.21;
-      const radius = 210 + ((c * 47) % 90);
-      const baseY = 88 + ((c * 31) % 62);
-      const width = 26 + ((c * 13) % 22);
-      for (let p = 0; p < puffsPerCloud; p += 1) {
-        const spread = p === 0 ? 0 : (p % 2 === 0 ? 1 : -1) * (0.3 + p * 0.22);
-        pos.set(
-          Math.cos(angle) * radius + Math.cos(angle + Math.PI / 2) * width * spread,
-          baseY + (p === 0 ? 0 : (p % 2) * 5),
-          Math.sin(angle) * radius + Math.sin(angle + Math.PI / 2) * width * spread,
-        );
-        scale.set(
-          width * (p === 0 ? 1 : 0.62),
-          p === 0 ? 9 : 6.5,
-          width * (p === 0 ? 0.62 : 0.42),
-        );
-        m.compose(pos, q, scale);
-        mesh.setMatrixAt(c * puffsPerCloud + p, m);
-      }
-    }
+    boxes.forEach((b, i) => {
+      pos.set(b.x, b.y, b.z);
+      scale.set(b.w, b.h, b.d);
+      m.compose(pos, q, scale);
+      mesh.setMatrixAt(i, m);
+    });
     mesh.instanceMatrix.needsUpdate = true;
 
     this.clouds = mesh;
     this.scene.add(mesh);
-  }
-
-  /**
-   * 飞鸟：3 只一组，绕世界缓慢盘旋，翅膀用两个薄片交替扇动。
-   * 每只鸟是一个 Group，位置由 angle/radius 参数化，避免逐帧三角函数堆积。
-   */
-  private buildBirds() {
-    const birdMat = new THREE.MeshBasicMaterial({ color: 0x2b3230, fog: false });
-    const groups: THREE.Group[] = [];
-    const specs = [
-      { radius: 46, height: 30, speed: 0.22, phase: 0, size: 1 },
-      { radius: 58, height: 36, speed: 0.17, phase: 2.1, size: 0.82 },
-      { radius: 40, height: 26, speed: 0.26, phase: 4.3, size: 0.7 },
-      { radius: 66, height: 42, speed: 0.14, phase: 1.2, size: 0.9 },
-      { radius: 52, height: 33, speed: 0.2, phase: 3.4, size: 0.76 },
-      { radius: 44, height: 28, speed: 0.24, phase: 5.5, size: 0.66 },
-    ];
-
-    for (const spec of specs) {
-      const bird = new THREE.Group();
-      bird.frustumCulled = false;
-
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.34, 0.34), birdMat);
-      bird.add(body);
-
-      // 两片翅膀各自挂在 body 两侧，扇动时绕 z 轴小角度摆动。
-      const wingGeo = new THREE.BoxGeometry(1.5, 0.06, 0.5);
-      const left = new THREE.Mesh(wingGeo, birdMat);
-      left.position.set(0, 0.06, -0.62);
-      const right = new THREE.Mesh(wingGeo, birdMat);
-      right.position.set(0, 0.06, 0.62);
-      bird.add(left, right);
-
-      bird.userData.wings = [left, right];
-      bird.userData.spec = spec;
-      bird.scale.setScalar(spec.size);
-
-      groups.push(bird);
-      this.scene.add(bird);
-    }
-    this.birds = groups;
   }
 
   setWeather(type: WeatherType) {
@@ -396,55 +405,28 @@ export class Environment {
       this.night * (1 - tint.mix * 0.9) * (0.72 + Math.sin(this.time * 8) * 0.05);
 
     this.updateClouds(dt, cameraPos, tint.mix, day);
-    this.updateBirds(dt, cameraPos);
   }
 
-  /** 云跟着相机平移，随时间缓慢自转；夜里变暗、雨雾天变浑厚。 */
+  /** 云跟着相机平移，随时间缓慢自转；白天偏白，黄昏染色，夜里融进天空。 */
   private updateClouds(dt: number, cameraPos: THREE.Vector3, tintMix: number, day: number) {
     const clouds = this.clouds;
     if (!clouds) return;
 
-    this.cloudDrift += dt * 0.006;
+    this.cloudDrift += dt * 0.004;
     clouds.position.copy(cameraPos);
     clouds.rotation.y = this.cloudDrift;
 
-    const mat = clouds.material as THREE.MeshLambertMaterial;
-    // 晴天明亮，阴雨天更灰；夜里几乎融进夜空但仍留一点轮廓。
-    const brightness = 0.42 + day * 0.58;
-    mat.color.setRGB(brightness, brightness, brightness);
-    mat.opacity = (1 - tintMix * 0.35) * (0.35 + day * 0.6) * (1 - this.night * 0.55);
-    clouds.visible = mat.opacity > 0.02;
-  }
-
-  /** 飞鸟绕世界中心盘旋，翅膀按相位交替扇动。 */
-  private updateBirds(dt: number, cameraPos: THREE.Vector3) {
-    this.birdTime += dt;
-    for (const bird of this.birds) {
-      const spec = bird.userData.spec as {
-        radius: number;
-        height: number;
-        speed: number;
-        phase: number;
-        size: number;
-      };
-      const t = this.birdTime * spec.speed + spec.phase;
-      bird.position.set(
-        cameraPos.x + Math.cos(t) * spec.radius,
-        spec.height + Math.sin(t * 2.1) * 3.5,
-        cameraPos.z + Math.sin(t) * spec.radius,
-      );
-      // 朝向切线方向飞行
-      bird.rotation.y = -t + Math.PI / 2;
-
-      const flap = Math.sin(t * 7.5) * 0.55;
-      const wings = bird.userData.wings as THREE.Mesh[];
-      if (wings) {
-        wings[0]!.rotation.x = flap;
-        wings[1]!.rotation.x = -flap;
-      }
-
-      bird.visible = this.night < 0.85 && this.weather !== "fog";
-    }
+    const mat = clouds.material as THREE.MeshBasicMaterial;
+    // 先取云所在高度（仰角约 25°）的天空色，白天再提亮成白色；
+    // 傍晚少提亮、保留暖色，夜里几乎不提亮，云就自然融进夜空。
+    // 阴雨雾天天空整体变灰，云的白度也要跟着收，否则会白得浮在天空之外。
+    const whiteMix = (0.34 + day * 0.6) * (1 - this.night * 0.94) * (1 - tintMix * 0.6);
+    this.cloudColor
+      .copy(this.horizonColor)
+      .lerp(this.topColor, 0.42)
+      .lerp(this.whiteColor, whiteMix);
+    this.cloudColor.multiplyScalar(1 - tintMix * 0.4);
+    mat.color.copy(this.cloudColor);
   }
 
   private sampleSky(hour: number): { top: THREE.Color; horizon: THREE.Color; key: SkyKey } {

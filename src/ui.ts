@@ -10,6 +10,8 @@ export interface SignalReading extends SignalCopy {
 /** 目镜目录里的一行：只有编号和标签，点开后才是正文。 */
 export interface SignalEntry extends Pick<SignalCopy, "index" | "label"> {
   id: string;
+  /** 星点是否已被玩家连入正在画的星座。 */
+  state: "linked" | "open";
 }
 
 export interface UIHandlers {
@@ -87,31 +89,6 @@ export interface UISnapshot {
   scopeReading: SignalReading | null;
   /** 目镜目录：这一片星空里有哪些信号可读。 */
   scopeEntries: readonly SignalEntry[];
-  /**
-   * BIM 查看器：打开时世界停止渲染、鼠标释放，整个画面交给 BIM 场景。
-   * loading 0..100 用于进度条，error 非空时显示重试。
-   */
-  bimOpen: boolean;
-  bimLoading: boolean;
-  bimProgress: number;
-  bimError: string;
-  /** 数据来源：glb 表示读了 public/models/bim.glb，procedural 是程序化生成。 */
-  bimOrigin: "glb" | "procedural" | "";
-  /** 当前显示楼层；null 表示全部。 */
-  bimFloor: number | null;
-  /** 选中的构件属性；null 表示没选中。 */
-  bimSelection: BimSelection | null;
-}
-
-/** 右侧属性卡的内容：一个构件的可读属性。 */
-export interface BimSelection {
-  id: string;
-  name: string;
-  type: string;
-  floor: number;
-  volume: number;
-  elevation: number;
-  material: string;
 }
 
 const initialSnapshot: UISnapshot = {
@@ -156,13 +133,6 @@ const initialSnapshot: UISnapshot = {
   scopeOpen: false,
   scopeReading: null,
   scopeEntries: [],
-  bimOpen: false,
-  bimLoading: false,
-  bimProgress: 0,
-  bimError: "",
-  bimOrigin: "",
-  bimFloor: null,
-  bimSelection: null,
 };
 
 let snapshot = initialSnapshot;
@@ -384,7 +354,6 @@ export class UI {
       snapshot.helpOpen ||
       snapshot.mapOpen ||
       snapshot.profileOpen ||
-      snapshot.bimOpen ||
       snapshot.reading !== null
     );
   }
@@ -483,76 +452,9 @@ export class UI {
       snapshot.mapOpen ||
       snapshot.profileOpen ||
       snapshot.helpOpen ||
-      snapshot.bimOpen ||
       snapshot.photoOpen ||
       snapshot.reading !== null
     );
-  }
-
-  // ------------------------------------------------------------- BIM 查看器
-
-  /**
-   * 打开 BIM 查看器。和设置面板一样要释放鼠标锁定，但 isBlocking 为真，
-   * 所以 pointerlockchange 里不会弹「点击继续」遮罩。
-   */
-  openBim() {
-    updateSnapshot({
-      bimOpen: true,
-      bimLoading: true,
-      bimProgress: 0,
-      bimError: "",
-      bimOrigin: "",
-      bimFloor: null,
-      bimSelection: null,
-      settingsOpen: false,
-      helpOpen: false,
-      mapOpen: false,
-      reading: null,
-      pauseVisible: false,
-      touchActive: false,
-      prompt: null,
-    });
-    if (document.pointerLockElement) document.exitPointerLock();
-  }
-
-  setBimProgress(value: number) {
-    updateSnapshot({ bimProgress: Math.round(Math.max(0, Math.min(1, value)) * 100) });
-  }
-
-  setBimReady(origin: "glb" | "procedural") {
-    updateSnapshot({ bimLoading: false, bimProgress: 100, bimOrigin: origin });
-  }
-
-  setBimError(message: string) {
-    updateSnapshot({ bimLoading: false, bimError: message });
-  }
-
-  setBimFloor(floor: number | null) {
-    if (!snapshot.bimOpen) return;
-    updateSnapshot({ bimFloor: floor });
-  }
-
-  selectBimElement(selection: BimSelection | null) {
-    if (!snapshot.bimOpen) return;
-    updateSnapshot({ bimSelection: selection });
-  }
-
-  closeBim(resume = true) {
-    updateSnapshot({
-      bimOpen: false,
-      bimLoading: false,
-      bimProgress: 0,
-      bimError: "",
-      bimOrigin: "",
-      bimFloor: null,
-      bimSelection: null,
-      touchActive: this.isTouch && !this.anyPanelOpen(),
-    });
-    if (resume) this.handlers.onResume();
-  }
-
-  get isBimOpen() {
-    return snapshot.bimOpen;
   }
 
   openProfile(tab: ProfileTab = "overview") {

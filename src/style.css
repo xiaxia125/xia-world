@@ -2199,6 +2199,33 @@ select:focus {
   color: rgba(216, 255, 95, 0.8);
 }
 
+/* 未连入：还没被连进星座，整体压暗 */
+.scope-index-list li.is-open {
+  color: rgba(255, 255, 255, 0.34);
+}
+.scope-index-list li.is-open span:first-child {
+  color: rgba(255, 255, 255, 0.3);
+}
+/* 已连入：高亮 lime 强调 */
+.scope-index-list li.is-linked {
+  color: rgba(255, 255, 255, 0.92);
+}
+.scope-index-list li.is-linked span:first-child {
+  color: rgba(216, 255, 95, 0.9);
+}
+
+/* 连星进度：x/6 */
+.scope-count {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--paper-dim);
+}
+.scope-count span {
+  color: rgba(216, 255, 95, 0.9);
+}
+
 /* 退出提示：右下角，和左下内容区错开 */
 .scope-exit {
   position: absolute;

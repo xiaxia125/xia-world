@@ -13,6 +13,8 @@ import type { UISnapshot } from "../../ui";
 export function ScopeView({ snapshot }: { snapshot: UISnapshot }) {
   if (!snapshot.scopeOpen) return null;
   const reading = snapshot.scopeReading;
+  const linkedCount = snapshot.scopeEntries.filter((entry) => entry.state === "linked").length;
+  const total = snapshot.scopeEntries.length;
 
   return (
     <div className="scope">
@@ -37,13 +39,19 @@ export function ScopeView({ snapshot }: { snapshot: UISnapshot }) {
                 <li key={tag}>{tag}</li>
               ))}
             </ul>
+            <p className="scope-count">
+              已连入 <span>{linkedCount}</span>/{total}
+            </p>
           </article>
         ) : (
           <div className="scope-index-list">
-            <p className="scope-prompt">瞄准一颗星点，按 E 读取</p>
+            <p className="scope-prompt">用准星瞄准夜空里的星点，按 E 把它连进你正在画的星座</p>
+            <p className="scope-count">
+              已连入 <span>{linkedCount}</span>/{total}
+            </p>
             <ul>
               {snapshot.scopeEntries.map((entry) => (
-                <li key={entry.id}>
+                <li key={entry.id} className={entry.state === "linked" ? "is-linked" : "is-open"}>
                   <span>{entry.index}</span>
                   <span>{entry.label}</span>
                 </li>
