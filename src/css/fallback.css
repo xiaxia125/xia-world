@@ -172,6 +172,15 @@
     padding: 0 9px;
   }
 
+  /* 窄屏只留图标，避免顶部状态栏被挤成两行。 */
+  .view-chip > span:last-child {
+    display: none;
+  }
+
+  .view-chip {
+    padding: 0 10px;
+  }
+
   .hud-hint {
     display: none;
   }

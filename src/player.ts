@@ -1,4 +1,5 @@
- import * as THREE from "three";
+import * as THREE from "three";
+import { Avatar } from "./avatar";
 import type { AABB } from "./world/types";
 
 const EYE_HEIGHT = 1.62;
@@ -24,6 +25,15 @@ export class Player {
   touchMode = false;
   /** 坐姿：只靠禁用位移 + 眼高偏移实现，不碰碰撞体，起身时恢复。 */
   seated = false;
+  /** 视角模式：第一人称贴近眼睛，第三人称退到身后并显示体素小人。 */
+  view: "first" | "third" = "first";
+  private avatar?: Avatar;
+  /** 第三人称相机到角色的距离，遇到墙会收缩，离开后缓慢回到正常距离。 */
+  private camDist = 4.1;
+  private bodyYaw = 0;
+  private readonly camPivot = new THREE.Vector3();
+  private readonly camDir = new THREE.Vector3();
+  private readonly camBack = new THREE.Vector3();
   private eyeOffset = 0;
   private seatSave: {
     x: number;
@@ -184,6 +194,26 @@ export class Player {
     this.joystickY = THREE.MathUtils.clamp(y, -1, 1);
   }
 
+  /** 把第三人称的小人挂到玩家身上（引擎在场景里 new 好后传进来）。 */
+  attachAvatar(avatar: Avatar) {
+    this.avatar = avatar;
+    this.avatar.setVisible(this.view === "third");
+    this.syncCamera();
+  }
+
+  setView(view: "first" | "third") {
+    if (this.view === view) return;
+    this.view = view;
+    // 从第三人称切回第一人称时，先把距离复位，下次进入不会从贴脸开始。
+    if (view === "first") this.camDist = 4.1;
+    this.syncCamera();
+  }
+
+  /** 第三人称相机到角色之间的距离：交互判定要把它从射线距离里扣掉。 */
+  get cameraBackDistance() {
+    return this.view === "third" ? this.camDist : 0;
+  }
+
   queueJump() {
     // 坐着时不该攒跳跃：起身那一刻把缓冲放出去会让人突然弹一下。
     if (this.seated) return;
@@ -280,7 +310,8 @@ export class Player {
     // Smooth the camera over kerbs and stairs without delaying the body.
     this.stepOffset = THREE.MathUtils.damp(this.stepOffset, 0, 14, frameDt);
     this.stepOffset = THREE.MathUtils.clamp(this.stepOffset, -0.78, 0);
-    this.syncCamera();
+    this.updateAvatar(frameDt);
+    this.syncCamera(frameDt);
   }
 
   private step(dt: number) {
@@ -363,14 +394,137 @@ export class Player {
     if (this.bobAmount < 0.01) this.bobPhase = 0;
   }
 
-  private syncCamera() {
+  private updateAvatar(dt: number) {
+    const avatar = this.avatar;
+    if (!avatar) return;
+
+    // 身体朝移动方向；站着不动时跟着视线转，这样回头也能看到小人的脸。
+    let target = this.yaw;
+    if (!this.seated && this.horizontalSpeed > 0.8) {
+      target = Math.atan2(-this.velocity.x, -this.velocity.z);
+    }
+    const delta = Math.atan2(Math.sin(target - this.bodyYaw), Math.cos(target - this.bodyYaw));
+    this.bodyYaw += delta * Math.min(1, dt * 8);
+
+    avatar.update(dt, {
+      speed: this.horizontalSpeed,
+      onGround: this.onGround,
+      seated: this.seated,
+    });
+  }
+
+  /**
+   * 第三人称相机：从眼睛位置后退一段距离，用 AABB 步进检测把镜头从墙里拉回来；
+   * 距离骤减时立即贴墙，离开后再缓慢回到正常距离，避免在房间里来回弹。
+   */
+  private clipCamera(origin: THREE.Vector3, dir: THREE.Vector3, maxDist: number) {
+    const pad = 0.26;
+    let best = maxDist;
+    for (const c of this.colliders) {
+      let tmin = 0;
+      let tmax = best;
+
+      if (Math.abs(dir.x) < 1e-6) {
+        if (origin.x < c.minX - pad || origin.x > c.maxX + pad) continue;
+      } else {
+        const inv = 1 / dir.x;
+        let t1 = (c.minX - pad - origin.x) * inv;
+        let t2 = (c.maxX + pad - origin.x) * inv;
+        if (t1 > t2) {
+          const tmp = t1;
+          t1 = t2;
+          t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) continue;
+      }
+
+      if (Math.abs(dir.y) < 1e-6) {
+        if (origin.y < c.minY - pad || origin.y > c.maxY + pad) continue;
+      } else {
+        const inv = 1 / dir.y;
+        let t1 = (c.minY - pad - origin.y) * inv;
+        let t2 = (c.maxY + pad - origin.y) * inv;
+        if (t1 > t2) {
+          const tmp = t1;
+          t1 = t2;
+          t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) continue;
+      }
+
+      if (Math.abs(dir.z) < 1e-6) {
+        if (origin.z < c.minZ - pad || origin.z > c.maxZ + pad) continue;
+      } else {
+        const inv = 1 / dir.z;
+        let t1 = (c.minZ - pad - origin.z) * inv;
+        let t2 = (c.maxZ + pad - origin.z) * inv;
+        if (t1 > t2) {
+          const tmp = t1;
+          t1 = t2;
+          t2 = tmp;
+        }
+        if (t1 > tmin) tmin = t1;
+        if (t2 < tmax) tmax = t2;
+        if (tmin > tmax) continue;
+      }
+
+      if (tmax < 0 || tmin > best) continue;
+      if (tmin > 0.02) best = tmin;
+    }
+    return Math.max(0.5, best - 0.12);
+  }
+
+  private syncCamera(dt = 1 / 60) {
     const bob = this.onGround ? Math.sin(this.bobPhase * 2) * 0.019 * this.bobAmount : 0;
-    this.camera.position.set(
-      this.position.x,
-      this.position.y + EYE_HEIGHT + this.eyeOffset + this.stepOffset + bob,
-      this.position.z,
-    );
-    this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    const eyeY = this.position.y + EYE_HEIGHT + this.eyeOffset + this.stepOffset + bob;
+
+    if (this.view === "third") {
+      // 第三人称的旋转中心放在胸口/坐姿肩部，低头时镜头会自然抬高。
+      this.camPivot.set(
+        this.position.x,
+        this.position.y + (this.seated ? 1.22 : 1.46) + this.stepOffset,
+        this.position.z,
+      );
+      const cosPitch = Math.cos(this.pitch);
+      this.camDir.set(
+        -Math.sin(this.yaw) * cosPitch,
+        Math.sin(this.pitch),
+        -Math.cos(this.yaw) * cosPitch,
+      );
+      // 相机是往视线反方向退的，所以碰撞要从反方向测，不能拿朝前的射线。
+      this.camBack.copy(this.camDir).multiplyScalar(-1);
+      const allowed = this.clipCamera(this.camPivot, this.camBack, 4.1);
+      if (allowed < this.camDist) this.camDist = allowed;
+      else this.camDist = THREE.MathUtils.damp(this.camDist, allowed, 6, dt);
+
+      this.camera.position.copy(this.camPivot).addScaledVector(this.camDir, -this.camDist);
+      this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    } else {
+      this.camera.position.set(this.position.x, eyeY, this.position.z);
+      this.camera.rotation.set(this.pitch, this.yaw, 0, "YXZ");
+    }
+
+    if (this.avatar) {
+      const headYaw = Math.atan2(
+        Math.sin(this.yaw - this.bodyYaw),
+        Math.cos(this.yaw - this.bodyYaw),
+      );
+      this.avatar.setTransform(
+        this.position.x,
+        // 坐下时把模型放低一点，屁股才落在座面上；座椅锚点记录的是站立面高度，
+        // 直接用它会让小人悬在凳子上方。
+        this.position.y - (this.seated ? 0.22 : 0),
+        this.position.z,
+        this.bodyYaw,
+        THREE.MathUtils.clamp(headYaw, -0.85, 0.85),
+      );
+      // 镜头被墙挤到贴脸时藏起小人，避免看到模型内部。
+      this.avatar.setVisible(this.view === "third" && this.camDist > 1.02);
+    }
   }
 
   private moveAxis(axis: "x" | "y" | "z", delta: number) {

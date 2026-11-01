@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import WebGL from "three/addons/capabilities/WebGL.js";
 import { AudioSystem } from "./audio";
+import { Avatar } from "./avatar";
 import { Environment } from "./environment";
 import { Player } from "./player";
 import { getEmailAddress } from "./profile";
@@ -40,6 +41,8 @@ interface SaveData {
   timeScale?: number;
   eggs?: string[];
   stamps?: string[];
+  /** 第一人称 / 第三人称：刷新后保持上次选择。 */
+  view?: "first" | "third";
 }
 
 function loadSave(): SaveData {
@@ -180,6 +183,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   player = new Player(camera, canvas, world.colliders);
   player.sensitivity = sensitivity;
   player.touchMode = isTouch;
+  // 第三人称的小人：挂到场景里，由 Player 每帧同步位置与动作。
+  const avatar = new Avatar();
+  scene.add(avatar.group);
+  player.attachAvatar(avatar);
+  player.setView(saved.view === "third" ? "third" : "first");
   if (state.hasSavedPosition) {
     player.setPosition(
       state.savedPosition.x,
@@ -230,6 +238,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     },
     onExitPiano: () => exitPiano(),
     onResume: () => resumeGame(),
+    onToggleView: () => toggleView(),
     onTouchModeChange: (touch) => {
       player.touchMode = touch;
       if (touch) {
@@ -247,6 +256,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   ui.setVolume(volume);
   ui.setQuality(quality);
   ui.setTimeScale(timeScale);
+  ui.setViewMode(player.view);
   ui.setEggs(eggs.size, EGG_TOTAL);
   ui.setStamps([...stamps]);
   world.setEggCount(eggs.size);
@@ -356,6 +366,24 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     audio.setMusic(musicOn);
     ui.setMusic(musicOn);
     ui.toast(musicOn ? "背景音乐已打开 · XIA RADIO" : "背景音乐已关闭", 2400);
+    save();
+  }
+
+  /**
+   * 第一人称 / 第三人称。第三人称会退到身后并露出体素小人，
+   * 镜头撞墙时自动贴近，出房间后再慢慢退回原位。
+   */
+  function toggleView() {
+    const next = player.view === "first" ? "third" : "first";
+    player.setView(next);
+    ui.setViewMode(next);
+    audio.click();
+    ui.toast(
+      next === "third"
+        ? "第三人称 · 现在能看到自己了，按 V 切回第一人称。"
+        : "第一人称 · 按 V 随时切到第三人称。",
+      2800,
+    );
     save();
   }
 
@@ -496,6 +524,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   }
 
   let telescopeActive = false;
+  /** 进入望远镜前的视角；目镜是贴着眼睛看的，退出时再还原。 */
+  let telescopePreviousView: "first" | "third" | null = null;
 
   /** 坐下：位置与朝向来自座椅代理上的 userData，起身时由 Player 自己还原。 */
   function sitDown(anchor: {
@@ -539,6 +569,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     telescopeActive = true;
     // 相机贴近镜筒时模型会挡住整个窄视野，取景期间把它藏起来，退出再放回。
     world.setTelescopeModelVisible(false);
+    if (player.view === "third") {
+      telescopePreviousView = "third";
+      player.setView("first");
+      ui.setViewMode("first");
+    }
     ui.setScopeEntries(world.signalEntries);
     ui.setScopeOpen(true);
     aimTelescope();
@@ -553,6 +588,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     telescopeActive = false;
     world.setTelescopeModelVisible(true);
     ui.setScopeOpen(false);
+    if (telescopePreviousView) {
+      player.setView(telescopePreviousView);
+      ui.setViewMode(telescopePreviousView);
+      telescopePreviousView = null;
+    }
     if (world.isSignalConstellationOpen) world.toggleSignalConstellation();
     if (announce) ui.toast("已收起望远镜，视野恢复正常。", 2600);
   }
@@ -655,7 +695,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       }
       case "camp-seat":
       case "boat":
-      case "sky-lounger": {
+      case "sky-lounger":
+      case "lookout-bench": {
         const seat = target.object.userData.seat as
           | { x: number; y: number; z: number; yaw: number; eyeOffset: number; lookUp?: boolean }
           | undefined;
@@ -754,6 +795,7 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
       timeScale,
       eggs: [...eggs],
       stamps: [...stamps],
+      view: player.view,
     };
     try {
       localStorage.setItem(CURRENT_SAVE_KEY, JSON.stringify(data));
@@ -804,7 +846,11 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     for (const hit of hits) {
       const item = world.interactables.find((entry) => contains(entry.object, hit.object));
       if (!item) continue;
-      if (hit.distance > (item.maxDistance ?? 4)) continue;
+      // 第三人称的镜头在身后，射线距离要扣掉这段后退量，否则隔着几米也能互动；
+      // 镜头和角色之间（身后）的东西不算准星命中。
+      const back = player.cameraBackDistance;
+      if (hit.distance < back - 0.8) continue;
+      if (hit.distance - back > (item.maxDistance ?? 4)) continue;
       currentTarget = item;
       ui.setPrompt(item.label);
       return;
@@ -895,6 +941,9 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     } else if (event.code === "KeyM") {
       event.preventDefault();
       toggleMusic();
+    } else if (event.code === "KeyV") {
+      event.preventDefault();
+      if (!ui.isBlocking) toggleView();
     } else if (event.code === "KeyN") {
       event.preventDefault();
       if (ui.isMapOpen) ui.closeMap();

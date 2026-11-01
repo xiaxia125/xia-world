@@ -30,6 +30,8 @@ export interface UIHandlers {
   onPianoKey: (index: number) => void;
   onExitPiano: () => void;
   onResume: () => void;
+  /** 第一人称 / 第三人称切换（HUD 按钮与 V 键共用）。 */
+  onToggleView?: () => void;
   /** 指针类型变了（开发者工具切设备模拟、二合一设备插拔触屏）时通知引擎。 */
   onTouchModeChange?: (touch: boolean) => void;
 }
@@ -91,6 +93,8 @@ export interface UISnapshot {
   scopeReading: SignalReading | null;
   /** 目镜目录：这一片星空里有哪些信号可读。 */
   scopeEntries: readonly SignalEntry[];
+  /** 第一人称 / 第三人称，HUD 上显示当前模式。 */
+  viewMode: "first" | "third";
 }
 
 const initialSnapshot: UISnapshot = {
@@ -135,6 +139,7 @@ const initialSnapshot: UISnapshot = {
   scopeOpen: false,
   scopeReading: null,
   scopeEntries: [],
+  viewMode: "first",
 };
 
 let snapshot = initialSnapshot;
@@ -343,6 +348,14 @@ export class UI {
 
   setTimeScale(value: number) {
     updateSnapshot({ timeScale: value });
+  }
+
+  setViewMode(mode: "first" | "third") {
+    if (snapshot.viewMode !== mode) updateSnapshot({ viewMode: mode });
+  }
+
+  get isThirdPerson() {
+    return snapshot.viewMode === "third";
   }
 
   setPrompt(text: string | null) {

@@ -48,6 +48,18 @@ export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile, onOpenH
             <span aria-hidden="true">▦</span>
             <span>地图</span>
           </button>
+          <button
+            id="btn-view"
+            className="chip chip-button view-chip"
+            type="button"
+            title="切换第一 / 第三人称 (V)"
+            aria-label="切换第一 / 第三人称视角"
+            aria-pressed={snapshot.viewMode === "third"}
+            onClick={handlers.onToggleView}
+          >
+            <span id="view-icon" aria-hidden="true">{snapshot.viewMode === "third" ? "◉" : "○"}</span>
+            <span id="view-label">{snapshot.viewMode === "third" ? "第三人称" : "第一人称"}</span>
+          </button>
           <button id="btn-profile" className="chip chip-button profile-chip" type="button" title="打开职业档案 (P)" aria-label="打开职业档案" onClick={onOpenProfile}>
             <span aria-hidden="true">CV</span>
             <span>职业档案</span>
@@ -90,6 +102,7 @@ export function Hud({ snapshot, handlers, onOpenSettings, onOpenProfile, onOpenH
           <span><kbd>P</kbd> 职业档案</span>
           <span><kbd>R</kbd> 天气</span>
           <span><kbd>M</kbd> 音乐</span>
+          <span><kbd>V</kbd> 视角</span>
           <span><kbd>H</kbd> 说明</span>
           <span><kbd>ESC</kbd> 鼠标</span>
         </div>

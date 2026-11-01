@@ -2162,21 +2162,60 @@ export class WorldBuilder {
           });
         }
     
-        // 长椅 + 坐垫、靠枕、叠好的毯子。
-        this.addBench(-39.05, floorTop, -25.0, -1, "x");
-        this.addBox(-39.05, floorTop + 0.64, -25.0, 0.68, 0.08, 2.2, 0x2f5d54, { solid: false, edge: false });
-        this.addBox(-39.24, floorTop + 0.84, -25.78, 0.16, 0.42, 0.52, 0xe8e0cc, { solid: false });
-        this.addBox(-39.24, floorTop + 0.84, -24.22, 0.16, 0.42, 0.52, C.flowerA, { solid: false });
-        this.addBox(-39.02, floorTop + 0.72, -25.9, 0.58, 0.14, 0.6, 0x9a5a46, { solid: false, edge: false });
-        this.addBox(-39.02, floorTop + 0.8, -25.9, 0.59, 0.04, 0.61, 0xd8c7a6, { solid: false, edge: false });
+        // 长椅：靠背朝东，坐下时正好面向西边的落日。这里没有复用广场的 addBench ——
+        // 那条长椅的靠背是一整块板，从台子东侧走过来只看得到一块棕色木板，很容易
+        // 被当成墙。改成三条横板 + 两侧立柱 + 扶手，背面能透出落日，正反都像长椅。
+        // 位置：离西侧栏杆留出 1 米多的腿部空间（原来贴着栏杆，坐下时腿会伸到
+        // 栏杆外面去），同时退到台子南半侧，把中北面的三脚架和站人位置让出来。
+        const benchX = -38.35;
+        const benchZ = -23.4;
+        const benchY = floorTop;
+        this.addBox(benchX, benchY + 0.53, benchZ, 0.72, 0.12, 2.3, C.wood);
+        this.addBox(benchX - 0.34, benchY + 0.6, benchZ, 0.06, 0.03, 2.3, C.woodLight, { solid: false, edge: false });
+        for (const dz of [-1.0, 1.0]) {
+          this.addBox(benchX, benchY + 0.27, benchZ + dz, 0.62, 0.54, 0.16, C.metal);
+          this.addBox(benchX + 0.3, benchY + 0.92, benchZ + dz, 0.12, 0.78, 0.12, C.wood);
+          this.addBox(benchX + 0.34, benchY + 1.27, benchZ + dz, 0.5, 0.07, 0.12, C.wood, { solid: false });
+        }
+        for (const dy of [0.82, 1.04, 1.24]) {
+          this.addBox(benchX + 0.33, benchY + dy, benchZ, 0.1, 0.16, 2.1, C.wood, { solid: false });
+        }
+        // 坐垫、两个靠枕、叠好的毯子。
+        this.addBox(benchX - 0.02, benchY + 0.64, benchZ, 0.66, 0.08, 2.1, 0x2f5d54, { solid: false, edge: false });
+        this.addBox(benchX + 0.22, benchY + 0.9, benchZ - 0.78, 0.14, 0.4, 0.5, 0xe8e0cc, { solid: false });
+        this.addBox(benchX + 0.22, benchY + 0.9, benchZ + 0.78, 0.14, 0.4, 0.5, C.flowerA, { solid: false });
+        this.addBox(benchX - 0.16, benchY + 0.74, benchZ - 0.9, 0.5, 0.12, 0.55, 0x9a5a46, { solid: false, edge: false });
+        this.addBox(benchX - 0.16, benchY + 0.81, benchZ - 0.9, 0.51, 0.04, 0.56, 0xd8c7a6, { solid: false, edge: false });
+        // 让这张长椅真的能坐：锚点的高度按「坐垫顶面 - 髋部偏移」推出来，
+        // 否则小人会悬在半空（或陷进垫子里）。面朝正西，正好对着落日。
+        const benchSeat = new THREE.Mesh(
+          new THREE.BoxGeometry(0.92, 1.1, 2.0),
+          new THREE.MeshBasicMaterial({ visible: false }),
+        );
+        benchSeat.position.set(benchX, benchY + 0.6, benchZ);
+        benchSeat.name = "lookout-bench-seat";
+        benchSeat.userData.seat = {
+          x: benchX + 0.12,
+          y: benchY + 0.24,
+          z: benchZ,
+          yaw: Math.PI / 2,
+          eyeOffset: -0.5,
+        };
+        this.group.add(benchSeat);
+        this.interactables.push({
+          id: "lookout-bench",
+          object: benchSeat,
+          label: "坐下看落日",
+          maxDistance: 2.6,
+        });
     
-        // 小边桌：保温杯、速写本，给拍照的人放东西。
-        this.addBox(-39.0, floorTop + 0.29, -22.55, 0.72, 0.58, 0.62, C.woodDark, { tag: "lookout-table" });
-        this.addBox(-39.0, floorTop + 0.61, -22.55, 0.8, 0.06, 0.7, C.woodLight, { solid: false, edge: false });
-        this.addBox(-39.14, floorTop + 0.82, -22.62, 0.14, 0.3, 0.14, C.metalLight, { solid: false });
-        this.addBox(-39.14, floorTop + 0.99, -22.62, 0.16, 0.05, 0.16, C.lime, { solid: false, edge: false });
-        this.addBox(-38.8, floorTop + 0.67, -22.5, 0.34, 0.05, 0.26, C.flowerB, { solid: false, edge: false });
-        this.addBox(-38.8, floorTop + 0.7, -22.5, 0.3, 0.03, 0.22, C.white, { solid: false, edge: false });
+        // 小边桌：保温杯、速写本。挪到照片墙下面，成了「拍完照写点东西」的角落。
+        this.addBox(-39.0, floorTop + 0.29, -27.5, 0.72, 0.58, 0.62, C.woodDark, { tag: "lookout-table" });
+        this.addBox(-39.0, floorTop + 0.61, -27.5, 0.8, 0.06, 0.7, C.woodLight, { solid: false, edge: false });
+        this.addBox(-39.14, floorTop + 0.82, -27.57, 0.14, 0.3, 0.14, C.metalLight, { solid: false });
+        this.addBox(-39.14, floorTop + 0.99, -27.57, 0.16, 0.05, 0.16, C.lime, { solid: false, edge: false });
+        this.addBox(-38.8, floorTop + 0.67, -27.45, 0.34, 0.05, 0.26, C.flowerB, { solid: false, edge: false });
+        this.addBox(-38.8, floorTop + 0.7, -27.45, 0.3, 0.03, 0.22, C.white, { solid: false, edge: false });
     
         // 棉麻地毯：压住木板的单调，也给相机三脚架一个中心。
         this.addBox(-36.6, floorTop + 0.012, -24.3, 2.4, 0.02, 1.8, 0x33564d, { solid: false, edge: false });
@@ -2199,11 +2238,18 @@ export class WorldBuilder {
           }
         }
     
-        // 两盏落地灯：夜里从岛西侧看过来，这是唯一亮着的暖光。
+        // 两盏落地灯：夜里从岛西侧看过来，这是唯一亮着的暖光。灯罩只是发光方块，
+        // 真正照亮台面的是下面两盏 PointLight —— 没有它们，夜里整块木台是黑的。
+        // 光强由 world.setNight 按 poolLightBase 缩放，白天自动归零。
         for (const z of [-27.7, -22.3]) {
           this.addBox(-39.55, floorTop + 0.18, z, 0.26, 0.36, 0.26, C.woodDark, { solid: false });
           this.addBox(-39.55, floorTop + 0.48, z, 0.22, 0.24, 0.22, 0xffd9a0, { glow: true, solid: false });
           this.addBox(-39.55, floorTop + 0.64, z, 0.3, 0.06, 0.3, C.woodDark, { solid: false, edge: false });
+          const lamp = new THREE.PointLight(0xffcf92, 0, 9, 2);
+          lamp.position.set(-39.5, floorTop + 0.62, z);
+          this.group.add(lamp);
+          this.poolLights.push(lamp);
+          this.poolLightBase.push(7);
         }
     
         // 西侧串灯：沿着扶手挂一排小灯泡，黄昏后能看见一条暖线。
@@ -2268,14 +2314,16 @@ export class WorldBuilder {
           maxDistance: 3.2,
         });
     
+        // 牌挂南侧栏杆的内面：朝北，站在台面上就能读到；从外面看是背面，
+        // 所以旋转 180°，不然字是反的。
         this.addSign(
           signTexture("LOOKOUT", "SUNSET 18:00 / PHOTO POINT", "#e5c07b"),
           2.4,
           0.6,
           -36.8,
           2.2,
-          z1 + 0.08,
-          0,
+          z1 - 0.18,
+          Math.PI,
         );
     
         // 台子周围的草与野花，别让木台直接插在空草坪上。
@@ -2424,7 +2472,7 @@ export class WorldBuilder {
           [20, -10, 0.9],
           [-38, 20, 1.2],
           [38, 20, 1.1],
-          [-38, -20, 1.0],
+          [-45.5, -40, 1.0],
           [38, -20, 1.15],
           [8, 35, 1.0],
           [-10, 35, 0.9],
@@ -2522,10 +2570,8 @@ export class WorldBuilder {
           this.addBox(-49.2, 3.45, z, 1.7, 0.14, 1.7, C.stone, { edge: false, tag: "lookout-parapet" });
         }
     
-        // distant hills, outside the hedge：西侧改成两层低矮远山，不再是一堵近处的绿墙。
+        // distant hills, outside the hedge
         const hills: [number, number, number, number, number, number][] = [
-          [-78, 1.6, -30, 48, 4.0, 44],
-          [-112, 1.0, -52, 70, 6.0, 70],
           [62, 4, -28, 36, 10, 34],
           [-58, 2, 34, 30, 6, 26],
           [58, 3, 34, 32, 8, 28],
@@ -2538,6 +2584,71 @@ export class WorldBuilder {
             solid: false,
             edge: false,
           });
+        }
+    
+        // 西侧远山：观景台正对的方向。原来近处一块 48×44 的方块山横在 17 米外，
+        // 看起来像一堵绿墙；后来改成三级大台阶，又变成几块平顶的灰板子。
+        // 现在用不受光照的纯色剪影拼山脊：远山的平顶一旦参与光照，顶面会被天空光
+        // 刷成一条浅灰带，远看像山脊上铺了条公路。三层高低错落的窄方块 + 雾，
+        // 从台上看过去就是一条锯齿状的、越远越淡的剪影线。
+        const ridgeMaterials = new Map<number, THREE.MeshLambertMaterial>();
+        const ridgeBox = (
+          x: number,
+          z: number,
+          depth: number,
+          width: number,
+          top: number,
+          base: number,
+          color: number,
+        ) => {
+          let material = ridgeMaterials.get(color);
+          if (!material) {
+            // 关掉雾：远山 150 米外的雾色正好等于地平线的天光，留着雾就只剩一条
+            // 浅色带。关掉雾、保留光照，山的顶面和侧面才有明暗，不会像一堵板。
+            material = new THREE.MeshLambertMaterial({ color, fog: false });
+            ridgeMaterials.set(color, material);
+          }
+          const height = top - base;
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(depth, height, width), material);
+          mesh.position.set(x, base + height / 2, z);
+          mesh.name = "ridge";
+          this.group.add(mesh);
+        };
+        const ridgeRows: Array<{
+          x: number;
+          depth: number;
+          min: number;
+          max: number;
+          step: number;
+          color: number;
+        }> = [
+          { x: -96, depth: 18, min: 1.6, max: 4.5, step: 14, color: 0x3f6050 },
+          { x: -140, depth: 26, min: 4.0, max: 14.0, step: 22, color: 0x466a58 },
+          { x: -190, depth: 40, min: 7.0, max: 24.0, step: 26, color: 0x50756a },
+        ];
+        let ridgeSeed = 1337;
+        const ridgeRand = () => {
+          ridgeSeed = (ridgeSeed * 16807) % 2147483647;
+          return ridgeSeed / 2147483647;
+        };
+        for (const row of ridgeRows) {
+          // 落日方向：18:00 太阳在正西，但相机在台面西侧抬头看时，视线略偏南，
+          // 视觉上太阳落在 world z ≈ +3。缺口就开在这里。
+          const passCenter = 3;
+          // 每排压低的比例不同：最近一排只略微降低（还看得出是山脚），
+          // 远排压得更狠，让最远处的轮廓线沉下去，太阳才不会被一条平顶山脊切掉。
+          const passFactor = row.x < -180 ? 0.16 : row.x < -130 ? 0.28 : 0.6;
+          for (let z = -126; z <= 96; ) {
+            const width = row.step * (1.0 + ridgeRand() * 0.6);
+            let top = row.min + ridgeRand() * (row.max - row.min);
+            // 用平滑过渡代替原来 24 米宽的硬阈值：山口两侧的山峰会自然收拢，
+            // 不会出现「一边陡崖一边平地」的断层。
+            const d = Math.abs(z - passCenter);
+            const openness = THREE.MathUtils.smoothstep(d, 6, 40);
+            top *= passFactor + (1 - passFactor) * openness;
+            ridgeBox(row.x, z, row.depth, width, top, -30, row.color);
+            z += row.step * (0.72 + ridgeRand() * 0.5);
+          }
         }
       }
   

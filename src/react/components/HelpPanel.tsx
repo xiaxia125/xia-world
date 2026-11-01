@@ -13,6 +13,7 @@ const GROUPS: Array<{ id: string; kicker: string; title: string; rows: KeyRow[] 
       { keys: ["W", "A", "S", "D"], label: "在岛上漫游" },
       { keys: ["SHIFT"], label: "按住奔跑" },
       { keys: ["SPACE"], label: "跳跃" },
+      { keys: ["V"], label: "第一 / 第三人称" },
       { keys: ["MOUSE"], label: "转动视角" },
     ],
   },
@@ -52,6 +53,7 @@ const TOUCH_GROUPS: typeof GROUPS = [
       { keys: ["E"], label: "和眼前的东西互动" },
       { keys: ["CV"], label: "打开职业档案" },
       { keys: ["▦"], label: "查看岛屿地图" },
+      { keys: ["◉"], label: "切换第一 / 第三人称" },
     ],
   },
 ];
