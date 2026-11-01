@@ -462,6 +462,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
   function enterPiano() {
     if (pianoActive) return;
     pianoActive = true;
+    // 坐下弹琴时关掉背景音乐，避免干扰琴声；起身时恢复。
+    audio.setMusic(false);
     ui.setPrompt(null);
     // 坐在琴凳上弹：以前只弹出一个 toast，画面和人都没有反应。
     sitDown(world.pianoSeat, false);
@@ -476,6 +478,8 @@ export function boot(onWebGLUnavailable: () => void = () => {}): () => void {
     pianoActive = false;
     ui.setPianoOpen(false);
     standUpFromSeat(false);
+    // 起身恢复背景音乐；若访客初始就静音，主音量仍为 0，保持静音。
+    audio.setMusic(musicOn);
     ui.toast("钢琴合上了。", 1800);
   }
 
